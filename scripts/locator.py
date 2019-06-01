@@ -118,7 +118,7 @@ af=np.array([derived_counts[x]/(2*ninds[x]) for x in range(len(ninds))])
 ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
 genotypes=genotypes[ac_filter,:,:]
 if not args.max_SNPs==None:
-    snps_to_run=np.random.choice(range(len(ac)),args.max_SNPs,replace=False)
+    snps_to_run=np.random.choice(range(len(genotypes)),args.max_SNPs,replace=False)
     ac=genotypes.to_allele_counts()[snps_to_run,:,1]
     ac=replace_md(ac,af)
 else:
