@@ -4,7 +4,7 @@ import numpy as np, pandas as pd, tensorflow as tf
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
-os.environ["CUDA_VISIBLE_DEVICES"]="0" #set to "" to run on CPU
+#os.environ["CUDA_VISIBLE_DEVICES"]="0" #set to "" to run on CPU
 #config = tensorflow.ConfigProto(device_count={'CPU': 60})
 #sess = tensorflow.Session(config=config)
 # config = tf.ConfigProto()
@@ -115,7 +115,7 @@ if args.model=="CNN":
     model.add(layers.Conv1D(64, 7, activation='relu',input_shape=(np.shape(train_x)[1],1)))
     model.add(layers.Conv1D(32, 7, activation='relu'))
     model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
+    odel.compile(optimizer="Adam",
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
@@ -167,12 +167,14 @@ print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat))
 fig = plt.figure(figsize=(4,2),dpi=200)
 plt.rcParams.update({'font.size': 7})
 ax1=fig.add_axes([0,.59,0.25,.375])
-ax1.plot(history.history['val_loss'][10:],"-",color="black",lw=0.5)
+ax1.plot(history.history['val_loss'][5:],"-",color="black",lw=0.5)
 ax1.set_xlabel("Validation Loss")
+ax1.set_yscale("log")
 
 ax2=fig.add_axes([0,0,0.25,.375])
-ax2.plot(history.history['loss'][10:],"-",color="black",lw=0.5)
+ax2.plot(history.history['loss'][5:],"-",color="black",lw=0.5)
 ax2.set_xlabel("Training Loss")
+ax2.set_yscale("log")
 
 ax3=fig.add_axes([0.44,0.01,0.55,.94])
 ax3.scatter(testlocs[:,0],testlocs[:,1],s=4,linewidth=.4,facecolors="none",edgecolors="black")
