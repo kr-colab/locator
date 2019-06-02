@@ -44,6 +44,7 @@ parser.add_argument("--patience",type=int,default=100)
 parser.add_argument("--model",default="dense")
 parser.add_argument("--outname")
 parser.add_argument("--outdir")
+parser.add_argument("--seed",default=None,type=int)
 args=parser.parse_args()
 
 #debugging params
@@ -66,14 +67,13 @@ def split_by_locality():
     ntest=len(train)-round(args.train_split*len(train))
     l2=np.unique(locs[:,0])
     l2=l2[~np.isnan(l2)]
-    l2=l2[np.random.choice(range(len(l2)),len(l2),replace=False)]
     pop_indices=[]
-    for i in l2:
+    for i in l2: #get sample indices for each locality
         popinds=np.argwhere(locs[:,0]==i)
         popinds=[x[0] for x in popinds]
         pop_indices.append(popinds)
     test=[]
-    while len(test)<ntest:
+    while len(test)<ntest: #sample one ind per locality until you reach ntest samples
         pop_indices=np.array(pop_indices)[np.random.choice(range(len(pop_indices)),len(pop_indices))]
         for i in pop_indices:
             if len(test)<ntest:
@@ -94,6 +94,8 @@ def replace_md(ac,af):
                 ac[i,j]=np.random.binomial(2,af[i])
     return ac
 
+if not args.seed==None:
+    np.random.seed(args.seed)
 #load genotype matrices from VCF
 print("reading VCF")
 vcf=allel.read_vcf(args.vcf,log=sys.stderr)
@@ -189,13 +191,13 @@ if args.model=="dense":
     model.add(layers.Dense(256, activation='elu',input_shape=(np.shape(train_x)[1],)))
     model.add(layers.Dense(128,activation='elu'))
     model.add(layers.Dense(64,activation='elu'))
+    model.add(layers.Dropout(0.5))
     model.add(layers.Dense(16,activation='elu'))
+    #model.add(layers.Dropout(0.5))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
-
-
 
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
@@ -215,8 +217,12 @@ history = model.fit(train_x, trainlocs,
 model.load_weights(os.path.join(args.outdir,"weights.hdf5"))
 
 #predict and plot
-prediction=model.predict(pred_x)
-predout=pd.DataFrame(np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])) #reverse normalization
+predictions=np.zeros(shape=(len(pred_x),2))
+for i in range(100): #loop over predictions for uncertainty estimation via dropout
+    prediction=model.predict(pred_x)
+    prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
+    predictions=np.column_stack((predictions,prediction))
+predout=pd.DataFrame(predictions[:,2:])
 predout['sampleID']=samples[pred]
 predout.to_csv(os.path.join(args.outdir,args.outname+"_predlocs.txt"))
 
