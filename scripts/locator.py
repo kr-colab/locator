@@ -203,6 +203,20 @@ if args.model=="CNN":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
+if args.model=="GRU":
+    # this GRU runs on GPUs only, so needs smaller batch sizes than default
+    train_x=traingen.reshape(traingen.shape+(1,))
+    test_x=testgen.reshape(testgen.shape+(1,))
+    pred_x=predgen.reshape(predgen.shape+(1,))
+    print(np.shape(train_x))
+    model = Sequential()
+    model.add(layers.CuDNNGRU(256, input_shape=(np.shape(train_x)[1],1)))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=keras.losses.mean_squared_error,
+                  metrics=['mae'])
+    model.summary()
+    
 if args.model=="dense":
     train_x=traingen
     test_x=testgen
