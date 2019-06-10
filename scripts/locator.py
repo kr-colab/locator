@@ -4,6 +4,8 @@ import numpy as np, pandas as pd, tensorflow as tf
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
+import zarr
+import numcodecs
 #config = tensorflow.ConfigProto(device_count={'CPU': 60})
 #sess = tensorflow.Session(config=config)
 # config = tf.ConfigProto()
@@ -13,6 +15,7 @@ import argparse
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
+parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
                          'sampleID \t longitude \t latitude'.\
@@ -107,10 +110,18 @@ def replace_md(genotypes,impute=args.impute_missing):
     return ac
 
 #load genotype matrices from VCF
-print("reading VCF")
-vcf=allel.read_vcf(args.vcf,log=sys.stderr)
-genotypes=allel.GenotypeArray(vcf['calldata/GT'])
-samples=vcf['samples']
+
+if args.zarr is not None:
+    print("reading zarr")
+    callset = zarr.open_group(args.zarr, mode='r')
+    gt = callset['calldata/GT']
+    genotypes = allel.GenotypeArray(gt[:])
+    samples = callset['samples'][:]
+else:
+    print("reading VCF")
+    vcf=allel.read_vcf(args.vcf,log=sys.stderr)
+    genotypes=allel.GenotypeArray(vcf['calldata/GT'])
+    samples=vcf['samples']
 
 #load and sort sample data to match VCF sample order
 sample_data=pd.read_csv(args.sample_data,sep="\t")
@@ -354,7 +365,22 @@ if args.model=="dense7": #dogenet
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense8": #xanadu
+if args.model=="dense7_bn": #batchnorm
+    train_x=traingen
+    test_x=testgen
+    pred_x=predgen
+    model = Sequential()
+    model.add(layers.Dense(256, use_bias=False,
+                           input_shape=(np.shape(train_x)[1],)))
+    model.add(layers.BatchNormalization())
+    model.add(layers.Activation("elu"))
+    model.add(layers.Dense(64,activation='elu'))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=keras.losses.mean_squared_error,
+                  metrics=['mae'])
+
+if args.model=="dense8":
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -384,6 +410,37 @@ if args.model=="dense8": #xanadu
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
+if args.model=="GRU1":
+    train_x=traingen.reshape(traingen.shape+(1,))
+    test_x=testgen.reshape(testgen.shape+(1,))
+    pred_x=predgen.reshape(predgen.shape+(1,))
+    model = Sequential()
+    model.add(layers.LSTM(128,
+                         input_shape=(np.shape(train_x)[1],1)))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=keras.losses.mean_squared_error,
+                  metrics=['mae'])
+
+if args.model=="GRUBI":
+    # currently broken?!?
+    train_x=traingen.reshape(traingen.shape+(1,))
+    test_x=testgen.reshape(testgen.shape+(1,))
+    pred_x=predgen.reshape(predgen.shape+(1,))
+    model = Sequential()
+    model.add(layers.Bidirectional(layers.LSTM(128,
+                         input_shape=(np.shape(train_x)[1],1))))
+    model.add(layers.Dense(256))
+    model.add(layers.Dropout(0.35))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=keras.losses.mean_squared_error,
+                  metrics=['mse'])
+
+model.summary()
+
+
+=======
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
                                 filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
