@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --partition=gpu       ### queue to submit to
+#SBATCH --job-name=locator_%j    ### job name
+#SBATCH --output=batch_logs/%j.log   ### file in which to store job stdout
+#SBATCH --error=batch_logs/%j.err    ### file in which to store job stderr
+#SBATCH --time=20                ### wall-clock time limit, in minutes
+#SBATCH --mem=48G              ### memory limit
+#SBATCH --nodes=1               ### number of nodes to use
+#SBATCH --ntasks-per-node=1     ### number of tasks to launch per node
+#SBATCH --cpus-per-task=1       ### number of cores for each task
+
+cd /projects/kernlab/cbattey2/locator
+python3 scripts/locator.py \
+--vcf data/ag1000g2L_1e6_to_3e6.vcf.gz \
+--sample_data data/anopheles_samples_sp.txt \
+--model dense5 \
+--outdir out \
+--outname anopheles_2L13_dense5 \
+--train_split 0.85 \
+--patience 200

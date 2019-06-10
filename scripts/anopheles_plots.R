@@ -11,21 +11,30 @@ theme_set(theme_classic()+
                 strip.background=element_blank(),
                 strip.text=element_text(size=8)))
 
-pred <- data.frame(fread("out/anopheles_2L_200kSNPs_predlocs.txt"))[-1,-1]
+kdepred <- function(xcoords,ycoords){
+  long <- c();lat <- c()
+  for(i in 1:nrow(xcoords)){ #run 2d kernel density estimate and assign predicted locations to site with highest density
+    if(sd(xcoords[i,])>0.01 & sd(ycoords[i,])>0.01){ #prevent errors when predictions have near 0 spread (usually low dropout...)
+      density <- kde2d(xcoords[i,],ycoords[i,],n=100,
+                       lims = c(-21,51,-18,19))
+      max_index <- which(density[[3]] == max(density[[3]]), arr.ind = TRUE)
+      long <- append(long,density[[1]][max_index[1]])
+      lat <- append(lat,density[[2]][max_index[2]]) 
+    } else{
+      long <- append(long,mean(xcoords[i,]))
+      lat <- append(lat,mean(ycoords[i,]))
+    }
+  }
+  return(data.frame(long,lat))
+}
+
+pred <- data.frame(fread("out/anopheles_2L15_dense5_100000_5930_predlocs.txt"))[-1,-1]
 colnames(pred)[ncol(pred)] <- "sampleID"
 xcoords <- as.matrix(pred[,seq(1,ncol(pred)-1,2)])
 ycoords <- as.matrix(pred[,seq(2,ncol(pred)-1,2)])
 long <- c();lat <- c()
-pb <- progress_bar$new(total = nrow(coords))
-for(i in 1:nrow(xcoords)){ #run 2d kernel density estimate and assign predicted locations to site with highest density
-  density <- kde2d(xcoords[i,],ycoords[i,],n=500,
-                   lims = c(-21,51,-18,19))
-  max_index <- which(density[[3]] == max(density[[3]]), arr.ind = TRUE)
-  long <- append(long,density[[1]][max_index[1]])
-  lat <- append(lat,density[[2]][max_index[2]])
-  pb$tick()
-}
-best_pred <- data.frame(long,lat,pred[,ncol(pred)])
+best_pred <- kdepred(xcoords,ycoords)
+best_pred <- cbind(best_pred,pred[,ncol(pred)])
 colnames(best_pred) <- c("longitude","latitude","sampleID")
 samples <- fread("data/anopheles_samples_sp.txt")
 pd <- merge(best_pred,samples,by="sampleID",all=T)
@@ -37,10 +46,10 @@ plocs=as.matrix(pd[!is.na(pd$longitude.x),c("longitude.x","latitude.x")])
 tlocs=as.matrix(pd[!is.na(pd$longitude.x),c("longitude.y","latitude.y")])
 dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
                                                  t(as.matrix(tlocs[e,])),longlat = T))
-mean(dists)
 
-p <- ggplot()+coord_map(xlim = c(min(pd$longitude.y)-5,max(pd$longitude.y)+5),
-                        ylim = c(min(pd$latitude.y)-5,max(pd$latitude.y)+5))+
+map <- map_data("world")
+p <- ggplot()+coord_map(xlim = c(min(pd$longitude.x,na.rm=T)-5,max(pd$longitude.x,na.rm=T)+5),
+                        ylim = c(min(pd$latitude.x,na.rm=T)-5,max(pd$latitude.x,na.rm=T)+5))+
   theme(axis.line=element_blank(),
         axis.ticks=element_blank(),
         axis.text=element_blank(),
@@ -87,6 +96,8 @@ ggdraw()+
   draw_plot(p,0,0,1,1)+
   draw_plot(p2,0.05,.2,.325,.45)
 dev.off()
+print(paste("mean error=",mean(dists),"km"))
+print(paste("median error=",median(dists),"km"))
 
 #visualize distribution of predictions for one individual
 plot_uncertainty <- function(pred,sampleID,x,y,best_pred){
@@ -126,4 +137,3 @@ cowplot::plot_grid(plots[[1]],plots[[2]],plots[[3]],plots[[4]],
                    plots[[5]],plots[[6]],plots[[7]],plots[[8]],plots[[9]],ncol = 3)
 dev.off()
 
-print(median(dists))

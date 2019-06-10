@@ -84,7 +84,7 @@ do
 done
 
 #anopheles tests
-for i in {"dense5","dense2"}
+for i in {"dense7","dense9","dense10"}
 do
   for j in {100,1000,10000,100000,300000}
   do
@@ -92,7 +92,7 @@ do
     do
       echo anopheles_2L15_$i\_$j\_$k
       python3 scripts/locator.py \
-      --vcf data/ag1000g2L_1e6_to_5e6.vcf.gz \
+      --zarr data/ag1000g2L_1e6_to_5e6.zarr \
       --sample_data data/anopheles_samples_sp.txt \
       --impute_missing True \
       --dropout_prop 0.5 \
