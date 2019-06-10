@@ -439,8 +439,6 @@ if args.model=="GRUBI":
 
 model.summary()
 
-
-=======
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
                                 filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
