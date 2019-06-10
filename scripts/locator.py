@@ -38,10 +38,12 @@ parser.add_argument("--train_split",default=0.9,type=float,
 parser.add_argument("--batch_size",default=128,type=int)
 parser.add_argument("--max_epochs",default=5000,type=int)
 parser.add_argument("--min_mac",default=None,type=int)
+parser.add_argument("--max_SNPs",default=None,type=int,help="use first {max_SNPs} SNPs in the VCF")
 parser.add_argument("--impute_missing",default="True",type=str)
 parser.add_argument("--patience",type=int,default=200)
-parser.add_argument("--model",default="dense")
+parser.add_argument("--model",default="dense5")
 parser.add_argument("--outname")
+parser.add_argument("--normalize",default=False,type=bool)
 parser.add_argument("--outdir")
 parser.add_argument("--seed",default=None,type=int)
 parser.add_argument("--gpu_number",default=None,type=str)
@@ -131,14 +133,17 @@ if args.impute_missing in ['TRUE','true','True',"T","t",True]:
     ac=replace_md(genotypes,impute=True)
 else:
     ac=replace_md(genotypes,impute=False)
+if not args.max_SNPs==None:
+    ac=ac[:args.max_SNPs,:]
 print("running on "+str(len(ac))+" genotypes after filtering\n\n\n")
 
 #normalize coordinates
-meanlong=np.nanmean(locs[:,0])
-sdlong=np.nanstd(locs[:,0])
-meanlat=np.nanmean(locs[:,1])
-sdlat=np.nanstd(locs[:,1])
-locs=np.array([[(x[0]-meanlong)/sdlong,(x[1]-meanlat)/sdlat] for x in locs])
+if args.normalize==True:
+    meanlong=np.nanmean(locs[:,0])
+    sdlong=np.nanstd(locs[:,0])
+    meanlat=np.nanmean(locs[:,1])
+    sdlat=np.nanstd(locs[:,1])
+    locs=np.array([[(x[0]-meanlong)/sdlong,(x[1]-meanlat)/sdlat] for x in locs])
 
 #split training, testing, and prediction sets
 if args.mode=="predict": #NOTE: refactor and test with pabu...
@@ -146,9 +151,10 @@ if args.mode=="predict": #NOTE: refactor and test with pabu...
     train=np.array([x[0] for x in train])
     pred=np.array([x for x in range(len(locs)) if not x in train])
     if(args.locality_split in ['T','t','True','TRUE','true',True]):
+        print("splitting train/test by locality")
         test,train=split_by_locality()
     else:
-        test=np.random.choice(train,round((1-args.train_split)*len(train)))
+        test=np.random.choice(train,round((1-args.train_split)*len(train)),replace=False)
         #test=np.array(train[np.random.choice(train,round((1-args.train_split)*len(train)),replace=False)])
         train=np.array([x for x in train if x not in test])
     traingen=np.transpose(ac[:,train])
@@ -158,6 +164,7 @@ if args.mode=="predict": #NOTE: refactor and test with pabu...
     predgen=np.transpose(ac[:,pred])
 elif args.mode=="cv": #cross-validation mode
     if args.locality_split in ['T','t','True','TRUE','true',True]:
+        print("splitting train/test by locality")
         test,train=split_by_locality()
         pred=test
     else:
@@ -178,22 +185,8 @@ from keras import layers
 from keras.layers.core import Lambda
 from keras import backend as K
 import keras
-import keras.backend as K
-from keras import optimizers
-from keras.optimizers import RMSprop
-from keras.models import Model,Sequential,model_from_json
-from keras import layers
-from keras.layers import Input, Dense, Dropout, Activation, Flatten, Lambda
-from keras.layers import Conv2D, Conv1D, MaxPooling2D, AveragePooling2D,concatenate, MaxPooling1D, AveragePooling1D
-from keras.utils import np_utils
-from keras.callbacks import EarlyStopping,ModelCheckpoint
-from keras.utils.layer_utils import convert_all_kernels_in_model
-from sklearn.model_selection import train_test_split
-from keras.preprocessing.image import ImageDataGenerator
-from sklearn import preprocessing
-from keras import regularizers
 
-if args.model=="CNN":
+if args.model=="CNN": #squinty
     train_x=traingen.reshape(traingen.shape+(1,))
     test_x=testgen.reshape(testgen.shape+(1,))
     pred_x=predgen.reshape(predgen.shape+(1,))
@@ -221,7 +214,7 @@ if args.model=="GRU":
                   metrics=['mae'])
     model.summary()
 
-if args.model=="dense0":
+if args.model=="dense0": #wide
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -235,7 +228,7 @@ if args.model=="dense0":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense1":
+if args.model=="dense1": #mets
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -252,7 +245,7 @@ if args.model=="dense1":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense2":
+if args.model=="dense2": #keanu
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -269,7 +262,7 @@ if args.model=="dense2":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense3":
+if args.model=="dense3": #tedford
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -286,7 +279,7 @@ if args.model=="dense3":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense4":
+if args.model=="dense4": #erictrump
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -303,7 +296,7 @@ if args.model=="dense4":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense5":
+if args.model=="dense5": #goldilocks
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -322,7 +315,7 @@ if args.model=="dense5":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense6":
+if args.model=="dense6": #sharipova
     train_x=traingen
     test_x=testgen
     pred_x=predgen
@@ -341,25 +334,31 @@ if args.model=="dense6":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense7":
+if args.model=="dense7": #dogenet
     train_x=traingen
     test_x=testgen
     pred_x=predgen
     model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
+    model.add(layers.Dense(2048, activation='elu',
                            input_shape=(np.shape(train_x)[1],)))
+    model.add(layers.Dense(1024,activation='elu'))
+    model.add(layers.Dense(256,activation='elu'))
+    model.add(layers.Dense(128,activation='elu'))
+    model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop)))
+    model.add(layers.Dense(128,activation='elu'))
+    model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
     model.add(layers.Dense(64,activation='elu'))
+    model.add(layers.Dense(16,activation='elu'))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="dense8":
+if args.model=="dense8": #xanadu
     train_x=traingen
     test_x=testgen
     pred_x=predgen
     model = Sequential()
-    help(layers.Dense)
     model.add(layers.Dense(8192, activation='elu',
                            input_shape=(train_x.shape[1],)))
     model.add(layers.Dense(4096,activation='elu'))
@@ -385,25 +384,10 @@ if args.model=="dense8":
                   loss=keras.losses.mean_squared_error,
                   metrics=['mae'])
 
-if args.model=="GRU1":
-    train_x=traingen.reshape(traingen.shape+(1,))
-    test_x=testgen.reshape(testgen.shape+(1,))
-    pred_x=predgen.reshape(predgen.shape+(1,))
-    model = Sequential()
-    model.add(layers.GRU(128,
-                         input_shape=(np.shape(train_x)[1],1)))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=keras.losses.mean_squared_error,
-                  metrics=['mae'])
-
-model.summary()
-
-
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
                                 filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
-                                verbose=1,
+                                verbose=0,
                                 save_best_only=True,
                                 monitor="val_loss",
                                 period=1)
@@ -413,6 +397,8 @@ earlystop=keras.callbacks.EarlyStopping(monitor="val_loss",
 history = model.fit(train_x, trainlocs,
                     epochs=args.max_epochs,
                     batch_size=args.batch_size,
+                    shuffle=True,
+                    verbose=1,
                     validation_data=(test_x,testlocs),
                     callbacks=[checkpointer,earlystop])
 model.load_weights(os.path.join(args.outdir,args.outname+"_weights.hdf5"))
@@ -422,13 +408,15 @@ print("predicting locations...")
 predictions=np.zeros(shape=(len(pred_x),2))
 for i in tqdm(range(args.n_predictions)): #loop over predictions for uncertainty estimation via dropout
     prediction=model.predict(pred_x)
-    prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
+    if args.normalize==True:
+        prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
     predictions=np.column_stack((predictions,prediction))
 predout=pd.DataFrame(predictions[:,2:])
 predout['sampleID']=samples[pred]
 predout.to_csv(os.path.join(args.outdir,args.outname+"_predlocs.txt"))
 
-testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
+if args.normalize==True:
+    testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
 #print correlation coefficient for longitude
 if args.mode=="cv":
     r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
@@ -440,7 +428,11 @@ elif args.mode=="predict":
     r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat))
 
+hist=pd.DataFrame(history.history)
+hist.to_csv(os.path.join(args.outdir,args.outname+"_history.txt"),sep="\t",index=False)
+
 if args.plot:
+    plt.switch_backend('agg')
     fig = plt.figure(figsize=(4,2),dpi=200)
     plt.rcParams.update({'font.size': 7})
     ax1=fig.add_axes([0,.59,0.25,.375])
@@ -471,7 +463,7 @@ if args.plot:
 #                         max_epochs=5000,
 #                         patience=200,
 #                         impute_missing=True,
-#                         max_SNPs=None,
+#                         max_SNPs=100,
 #                         min_mac=2,
 #                         outname="anopheles_2L_1e6-2.5e6",
 #                         model="dense",
