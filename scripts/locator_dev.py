@@ -8,12 +8,15 @@ import argparse
 import zarr
 import numcodecs
 from sklearn.preprocessing import normalize,scale
+import time
 #config = tensorflow.ConfigProto(device_count={'CPU': 60})
 #sess = tensorflow.Session(config=config)
 # config = tf.ConfigProto()
 # config.intra_op_parallelism_threads = 44
 # config.inter_op_parallelism_threads = 44
 # tf.Session(config=config)
+
+start=time.time()
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -43,7 +46,7 @@ parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
 parser.add_argument("--batch_size",default=8,type=int,
-                    help="default: 32")
+                    help="default: 8")
 parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
 parser.add_argument("--patience",type=int,default=200,
@@ -122,7 +125,7 @@ def split_by_locality(): #note: this seems to make things worse...
         train=np.array([x for x in range(len(locs)) if x not in test])
     return test,train
 
-#replace missing sites with binomial(2,mean_allele_frequency)
+ #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes,impute=args.impute_missing):
     if impute in [True,"TRUE","True","T","true"]:
         print("imputing missing data")
@@ -141,7 +144,8 @@ def replace_md(genotypes,impute=args.impute_missing):
     #    ac[missingness]=-1
     return ac
 
-#load genotype matrices
+#load genotype matrices from VCF
+
 if args.zarr is not None:
     print("reading zarr")
     callset = zarr.open_group(args.zarr, mode='r')
@@ -239,14 +243,15 @@ if args.model=="dense":
     test_x=testgen
     pred_x=predgen
     model = Sequential()
-    model.add(layers.Dense(args.width,activation="elu",
+    model.add(layers.Dense(args.width,activation="relu",
                            input_shape=(np.shape(train_x)[1],)))
     for i in range(round((args.nlayers-1)/2)):
-        model.add(layers.Dense(args.width,activation="elu"))
+        model.add(layers.Dense(args.width,activation="relu"))
     if args.dropout_prop > 0:
         model.add(layers.Dropout(args.dropout_prop))
     for i in range(round((args.nlayers-1)/2)):
-        model.add(layers.Dense(int(args.width/2),activation="elu"))
+        model.add(layers.Dense(int(args.width/2),activation="relu"))
+    model.add(layers.Dense(2)) #projection ???
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=euclidean_distance_loss)
@@ -279,39 +284,6 @@ if args.model=="GRU":
                   loss=euclidean_distance_loss,
                   metrics=['mae'])
     model.summary()
-
-
-if args.model=="deepAF":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(64, activation='relu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(2))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss)
-
 
 if args.model=="dense0":
     train_x=traingen
@@ -532,7 +504,7 @@ if args.model=="dense10": #dense 5 with batch normalization
                   loss=euclidean_distance_loss,
                   metrics=['mae'])
 
-#fit model and choose best weights
+#fit model, store choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
                                 filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
                                 verbose=0,
@@ -569,8 +541,9 @@ if args.normalize==True:
 if args.mode=="cv":
     r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
     r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
-    mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-    median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
+    dists=[spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))]
+    mean_dist=np.mean(dists)
+    median_dist=np.median(dists)
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
            +"mean error "+str(mean_dist)+"\n"
            +"median error "+str(median_dist)+"\n")
@@ -578,13 +551,25 @@ elif args.mode=="predict":
     p2=model.predict(test_x)
     r2_long=np.corrcoef(p2[:,0],testlocs[:,0])[0][1]**2
     r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
-    mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-    median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
+    dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
+    mean_dist=np.mean(dists)
+    median_dist=np.median(dists)
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
            +"mean error "+str(mean_dist)+"\n"
            +"median error "+str(median_dist)+"\n")
 hist=pd.DataFrame(history.history)
 hist.to_csv(os.path.join(args.outdir,args.outname+"_history.txt"),sep="\t",index=False)
+
+end=time.time()
+elapsed=end-start
+
+row=[args.width,args.dropout_prop,args.max_SNPs,elapsed,mean_dist,median_dist]
+row=row+dists
+row=[str(x) for x in row]
+row=" ".join(row)+'\n'
+out=open("/data0/cbattey2/locator/locator_slimtest_summary.txt","a")
+out.write(row)
+out.close()
 
 if args.plot:
     plt.switch_backend('agg')
