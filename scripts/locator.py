@@ -8,12 +8,15 @@ import argparse
 import zarr
 import numcodecs
 from sklearn.preprocessing import normalize,scale
+import time
 #config = tensorflow.ConfigProto(device_count={'CPU': 60})
 #sess = tensorflow.Session(config=config)
 # config = tf.ConfigProto()
 # config.intra_op_parallelism_threads = 44
 # config.inter_op_parallelism_threads = 44
 # tf.Session(config=config)
+
+start=time.time()
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -65,10 +68,10 @@ parser.add_argument("--model",default="dense",
 parser.add_argument("--dropout_prop",default=0,type=float,
                     help="proportion of weights to drop at the dropout layer. \
                           default: 0.1 (rec 0.5 higher for large datasets and networks)")
-parser.add_argument("--nlayers",default=4,type=int,
+parser.add_argument("--nlayers",default=10,type=int,
                     help="if model=='dense', number of fully-connected \
                     layers in the network. \
-                    default: 4")
+                    default: 10")
 parser.add_argument("--width",default=256,type=int,
                     help="if model==dense, width of layers in the network\
                     default:256")
@@ -87,6 +90,9 @@ parser.add_argument("--n_predictions",default=1,type=int,
 parser.add_argument('--plot',default=False,type=bool,
                     help="produce a plot summarizing training and output? \
                           probably broken.\ default: False")
+parser.add_argument('--summary_out',default=None,type=str,
+                    help="file path to write mean, median, and validation error for all \
+                    points to file. default: None")
 args=parser.parse_args()
 
 if not args.seed==None:
@@ -187,7 +193,7 @@ if args.normalize==True:
     sdlat=np.nanstd(locs[:,1])
     locs=np.array([[(x[0]-meanlong)/sdlong,(x[1]-meanlat)/sdlat] for x in locs])
     ac=normalize(ac,axis=0,norm='l2')
-    #ac=scale(ac,axis=0)
+    #ac=scale(ac,axis=0) #l2 norm seems to work better (but why?)
 
 #split training, testing, and prediction sets
 if args.mode=="predict": #NOTE: refactor and test with pabu...
@@ -231,7 +237,8 @@ from keras import backend as K
 import keras
 
 def euclidean_distance_loss(y_true, y_pred):
-    return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1))
+    #return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1))
+    return K.sum(K.square(y_pred - y_true), axis=-1)
 
 #dense model builder
 if args.model=="dense":
@@ -239,14 +246,15 @@ if args.model=="dense":
     test_x=testgen
     pred_x=predgen
     model = Sequential()
-    model.add(layers.Dense(args.width,activation="elu",
-                           input_shape=(np.shape(train_x)[1],)))
+    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
+    #model.add(layers.Dense(args.width,activation="elu"))
     for i in range(round((args.nlayers-1)/2)):
         model.add(layers.Dense(args.width,activation="elu"))
     if args.dropout_prop > 0:
         model.add(layers.Dropout(args.dropout_prop))
     for i in range(round((args.nlayers-1)/2)):
-        model.add(layers.Dense(int(args.width/2),activation="elu"))
+        model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(2))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=euclidean_distance_loss)
@@ -280,265 +288,48 @@ if args.model=="GRU":
                   metrics=['mae'])
     model.summary()
 
-
-if args.model=="deepAF":
+if args.model=="kola":
     train_x=traingen
     test_x=testgen
     pred_x=predgen
     model = Sequential()
-    model.add(layers.Dense(64, activation='relu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
+    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width,activation="elu"))
     model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width,activation="elu"))
     model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64,activation='relu'))
-    model.add(layers.Dense(64))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dropout(args.dropout_prop))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dropout(args.dropout_prop))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width))
+    model.add(layers.Dense(args.width,activation="elu"))
     model.add(layers.Dense(2))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=euclidean_distance_loss)
 
-
-if args.model=="dense0":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(32, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense1": #batchnorm (moved from dense7_bn)
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, use_bias=False,
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense2":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.Dense(64,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense3":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.Dense(64,activation='elu'))
-    #model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    model.add(layers.Dense(16,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense4":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense5":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(256,activation='elu'))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.Dense(164,activation='elu'))
-    model.add(layers.Dense(64,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense6":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(1024, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(256,activation='elu'))
-    model.add(layers.Dense(128,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(164,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense7":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(2048, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(1024,activation='elu'))
-    model.add(layers.Dense(256,activation='elu'))
-    model.add(layers.Dense(128,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(128,activation='elu'))
-    if args.n_predictions > 1:
-        model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    else:
-        model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(layers.Dense(16,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="dense9":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, use_bias=False,
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-
-if args.model=="GRU1":
-    train_x=traingen.reshape(traingen.shape+(1,))
-    test_x=testgen.reshape(testgen.shape+(1,))
-    pred_x=predgen.reshape(predgen.shape+(1,))
-    model = Sequential()
-    model.add(layers.LSTM(128,
-                         input_shape=(np.shape(train_x)[1],1)))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="GRUBI":
-    # currently broken?!?
-    train_x=traingen.reshape(traingen.shape+(1,))
-    test_x=testgen.reshape(testgen.shape+(1,))
-    pred_x=predgen.reshape(predgen.shape+(1,))
-    model = Sequential()
-    model.add(layers.Bidirectional(layers.LSTM(128,
-                         input_shape=(np.shape(train_x)[1],1))))
-    model.add(layers.Dense(256))
-    model.add(layers.Dropout(0.35))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mse'])
-
-
-if args.model=="dense10": #dense 5 with batch normalization
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.Dense(256, activation='elu',
-                           input_shape=(np.shape(train_x)[1],)))
-    model.add(layers.Dense(256,activation='elu'))
-    model.add(layers.BatchNormalization())
-    model.add(layers.Activation("elu"))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.BatchNormalization())
-    model.add(layers.Activation("elu"))
-    model.add(layers.Dense(128,activation='elu'))
-    model.add(layers.Dense(64,activation='elu'))
-    model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop))) #modified dropout to also run at test time -- via https://github.com/keras-team/keras/issues/1606
-    model.add(layers.Dense(16,activation='elu'))
-    #model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop)))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
-                                filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
-                                verbose=0,
-                                save_best_only=True,
-                                monitor="val_loss",
-                                period=1)
+              filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
+              verbose=0,
+              save_best_only=True,
+              monitor="val_loss",
+              period=1)
 earlystop=keras.callbacks.EarlyStopping(monitor="val_loss",
                                         min_delta=0,
                                         patience=args.patience)
@@ -550,6 +341,14 @@ history = model.fit(train_x, trainlocs,
                     validation_data=(test_x,testlocs),
                     callbacks=[checkpointer,earlystop])
 model.load_weights(os.path.join(args.outdir,args.outname+"_weights.hdf5"))
+# model.fit(train_x, trainlocs,
+#           epochs=1000,
+#           batch_size=8,
+#           shuffle=True,
+#           verbose=1,
+#           validation_data=(test_x,testlocs),
+#           callbacks=[checkpointer,earlystop])
+# model.load_weights(os.path.join(args.outdir,args.outname+"_weights.hdf5"))
 
 #predict and plot
 print("predicting locations...")
@@ -571,6 +370,7 @@ if args.mode=="cv":
     r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
     mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
     median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
+    dists=[spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))]
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
            +"mean error "+str(mean_dist)+"\n"
            +"median error "+str(median_dist)+"\n")
@@ -580,11 +380,24 @@ elif args.mode=="predict":
     r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
     mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
     median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
+    dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
            +"mean error "+str(mean_dist)+"\n"
            +"median error "+str(median_dist)+"\n")
 hist=pd.DataFrame(history.history)
 hist.to_csv(os.path.join(args.outdir,args.outname+"_history.txt"),sep="\t",index=False)
+
+end=time.time()
+elapsed=end-start
+
+if not args.summary_out==None:
+    row=[args.width,args.dropout_prop,args.max_SNPs,elapsed,mean_dist,median_dist]
+    row=row+dists
+    row=[str(x) for x in row]
+    row=" ".join(row)+'\n'
+    out=open(args.summary_out,"a")
+    out.write(row)
+    out.close()
 
 if args.plot:
     plt.switch_backend('agg')
