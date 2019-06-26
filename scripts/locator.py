@@ -1,22 +1,11 @@
 #estimating sample locations from genotype matrices
-import allel, re, os, keras, matplotlib, sys
+import allel, re, os, keras, matplotlib, sys, zarr, numcodecs, time
 import numpy as np, pandas as pd, tensorflow as tf
 from scipy import spatial
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
-import zarr
-import numcodecs
 from sklearn.preprocessing import normalize,scale
-import time
-#config = tensorflow.ConfigProto(device_count={'CPU': 60})
-#sess = tensorflow.Session(config=config)
-# config = tf.ConfigProto()
-# config.intra_op_parallelism_threads = 44
-# config.inter_op_parallelism_threads = 44
-# tf.Session(config=config)
-
-start=time.time()
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -45,11 +34,11 @@ parser.add_argument("--locality_split",default="False",type=str,
 parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
-parser.add_argument("--batch_size",default=8,type=int,
-                    help="default: 32")
+parser.add_argument("--batch_size",default=128,type=int,
+                    help="default: 128")
 parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
-parser.add_argument("--patience",type=int,default=200,
+parser.add_argument("--patience",type=int,default=500,
                     help="n epochs to run the optimizer after last \
                           improved val_loss before stopping the run. \
                           default: 500")
@@ -63,11 +52,11 @@ parser.add_argument("--impute_missing",default="False",type=str,
                     help='default: False')
 parser.add_argument("--model",default="dense",
                     help="Select network architecture. options: 'dense', \
-                    maybe some others later if they stop sucking.\
+                    'CNN','GRU' (CNN and GRU not recommended for now).\
                     default:'dense'")
-parser.add_argument("--dropout_prop",default=0,type=float,
+parser.add_argument("--dropout_prop",default=0.25,type=float,
                     help="proportion of weights to drop at the dropout layer. \
-                          default: 0.1 (rec 0.5 higher for large datasets and networks)")
+                          default: 0.25")
 parser.add_argument("--nlayers",default=10,type=int,
                     help="if model=='dense', number of fully-connected \
                     layers in the network. \
@@ -75,8 +64,7 @@ parser.add_argument("--nlayers",default=10,type=int,
 parser.add_argument("--width",default=256,type=int,
                     help="if model==dense, width of layers in the network\
                     default:256")
-parser.add_argument("--outname",help="file name stem for output")
-parser.add_argument("--outdir",help="full path to output directory")
+parser.add_argument("--out",help="file name stem for output")
 parser.add_argument("--normalize",default=True,type=bool,
                     help="normalize genotypes and locations before inference?\
                           default: True")
@@ -87,7 +75,7 @@ parser.add_argument("--n_predictions",default=1,type=int,
                     help="if >1, number of predictions to generate \
                           for uncertainty estimation via droupout. \
                           default: 1")
-parser.add_argument('--plot',default=False,type=bool,
+parser.add_argument('--plot',default=True,type=bool,
                     help="produce a plot summarizing training and output? \
                           probably broken.\ default: False")
 parser.add_argument('--summary_out',default=None,type=str,
@@ -129,7 +117,7 @@ def split_by_locality(): #note: this seems to make things worse...
     return test,train
 
 #replace missing sites with binomial(2,mean_allele_frequency)
-def replace_md(genotypes,impute=args.impute_missing):
+def replace_md(genotypes,impute):
     if impute in [True,"TRUE","True","T","true"]:
         print("imputing missing data")
         dc=genotypes.count_alleles()[:,1]
@@ -141,10 +129,10 @@ def replace_md(genotypes,impute=args.impute_missing):
             for j in range(np.shape(ac)[1]):
                 if(missingness[i,j]):
                     ac[i,j]=np.random.binomial(2,af[i])
-    #else:
-    #    missingness=genotypes.is_missing()
-    #    ac=genotypes.to_allele_counts()[:,:,1]
-    #    ac[missingness]=-1
+    else:
+       missingness=genotypes.is_missing()
+       ac=genotypes.to_allele_counts()[:,:,1]
+       ac[missingness]=-1
     return ac
 
 #load genotype matrices
@@ -160,7 +148,7 @@ else:
     genotypes=allel.GenotypeArray(vcf['calldata/GT'])
     samples=vcf['samples']
 
-#load and sort sample data to match VCF sample order
+#sort sample data to match VCF sample order
 sample_data=pd.read_csv(args.sample_data,sep="\t")
 sample_data['sampleID2']=sample_data['sampleID']
 sample_data.set_index('sampleID',inplace=True)
@@ -180,7 +168,7 @@ if not args.min_mac==None:
 if args.impute_missing in ['TRUE','true','True',"T","t",True]:
     ac=replace_md(genotypes,impute=True)
 else:
-    ac=genotypes.to_allele_counts()[:,:,1]
+    ac=replace_md(genotypes,impute=False)
 if not args.max_SNPs==None:
     ac=ac[np.random.choice(range(ac.shape[0]),args.max_SNPs,replace=False),:]
 print("running on "+str(len(ac))+" genotypes after filtering\n\n\n")
@@ -192,7 +180,7 @@ if args.normalize==True:
     meanlat=np.nanmean(locs[:,1])
     sdlat=np.nanstd(locs[:,1])
     locs=np.array([[(x[0]-meanlong)/sdlong,(x[1]-meanlat)/sdlat] for x in locs])
-    ac=normalize(ac,axis=0,norm='l2')
+    #ac=normalize(ac,axis=0,norm='l2')
     #ac=scale(ac,axis=0) #l2 norm seems to work better (but why?)
 
 #split training, testing, and prediction sets
@@ -229,6 +217,7 @@ elif args.mode=="cv": #cross-validation mode
     testlocs=locs[test]
     predgen=testgen
 
+start=time.time()
 #define networks
 from keras.models import Sequential
 from keras import layers
@@ -237,8 +226,14 @@ from keras import backend as K
 import keras
 
 def euclidean_distance_loss(y_true, y_pred):
-    #return K.sqrt(K.sum(K.square(y_pred - y_true), axis=-1))
-    return K.sum(K.square(y_pred - y_true), axis=-1)
+    return K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
+
+def cluster_loss(y_true, y_pred): #nope
+    dist=K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
+    vardiff_x=K.abs(K.var(y_pred[:,0])-K.var(y_true[:,0]))
+    vardiff_y=K.abs(K.var(y_pred[:,1])-K.var(y_true[:,1]))
+    loss=dist+vardiff_x+vardiff_y
+    return loss
 
 #dense model builder
 if args.model=="dense":
@@ -248,19 +243,50 @@ if args.model=="dense":
     model = Sequential()
     model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
     #model.add(layers.Dense(args.width,activation="elu"))
-    for i in range(round((args.nlayers-1)/2)):
+    for i in range(int(np.floor(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
     if args.dropout_prop > 0:
         model.add(layers.Dropout(args.dropout_prop))
-    for i in range(round((args.nlayers-1)/2)):
+    for i in range(int(np.ceil(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
     model.add(layers.Dense(2))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
                   loss=euclidean_distance_loss)
 
-#other custom models (move to new file?)
-if args.model=="CNN": #squinty
+if args.model=="dense1":
+    train_x=traingen
+    test_x=testgen
+    pred_x=predgen
+    model = Sequential()
+    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
+    model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dropout(args.dropout_prop))
+    model.add(layers.Dense(2))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=euclidean_distance_loss)
+
+if args.model=="dense_cluster_loss":
+    train_x=traingen
+    test_x=testgen
+    pred_x=predgen
+    model = Sequential()
+    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
+    #model.add(layers.Dense(args.width,activation="elu",input_shape=(train_x.shape[1],)))
+    for i in range(int(np.floor(args.nlayers/2))):
+        model.add(layers.Dense(args.width,activation="elu"))
+    if args.dropout_prop > 0:
+        model.add(layers.Dropout(args.dropout_prop))
+    for i in range(int(np.ceil(args.nlayers/2))):
+        model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.Dense(2))
+    model.add(layers.Dense(2))
+    model.compile(optimizer="Adam",
+                  loss=cluster_loss)
+
+#other custom models
+if args.model=="CNN":
     train_x=traingen.reshape(traingen.shape+(1,))
     test_x=testgen.reshape(testgen.shape+(1,))
     pred_x=predgen.reshape(predgen.shape+(1,))
@@ -288,45 +314,11 @@ if args.model=="GRU":
                   metrics=['mae'])
     model.summary()
 
-if args.model=="kola":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
-    model = Sequential()
-    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dropout(args.dropout_prop))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width))
-    model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(2))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss)
 
 #fit model and choose best weights
 checkpointer=keras.callbacks.ModelCheckpoint(
-              filepath=os.path.join(args.outdir,args.outname+"_weights.hdf5"),
-              verbose=0,
+              filepath=args.out+"_weights.hdf5",
+              verbose=1,
               save_best_only=True,
               monitor="val_loss",
               period=1)
@@ -340,15 +332,7 @@ history = model.fit(train_x, trainlocs,
                     verbose=1,
                     validation_data=(test_x,testlocs),
                     callbacks=[checkpointer,earlystop])
-model.load_weights(os.path.join(args.outdir,args.outname+"_weights.hdf5"))
-# model.fit(train_x, trainlocs,
-#           epochs=1000,
-#           batch_size=8,
-#           shuffle=True,
-#           verbose=1,
-#           validation_data=(test_x,testlocs),
-#           callbacks=[checkpointer,earlystop])
-# model.load_weights(os.path.join(args.outdir,args.outname+"_weights.hdf5"))
+model.load_weights(args.out+"_weights.hdf5")
 
 #predict and plot
 print("predicting locations...")
@@ -360,10 +344,11 @@ for i in tqdm(range(args.n_predictions)): #loop over predictions for uncertainty
     predictions=np.column_stack((predictions,prediction))
 predout=pd.DataFrame(predictions[:,2:])
 predout['sampleID']=samples[pred]
-predout.to_csv(os.path.join(args.outdir,args.outname+"_predlocs.txt"))
+predout.to_csv(args.out+"_predlocs.txt")
 
 if args.normalize==True:
     testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
+
 #print correlation coefficient for longitude
 if args.mode=="cv":
     r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
@@ -376,22 +361,24 @@ if args.mode=="cv":
            +"median error "+str(median_dist)+"\n")
 elif args.mode=="predict":
     p2=model.predict(test_x)
+    p2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in p2])
     r2_long=np.corrcoef(p2[:,0],testlocs[:,0])[0][1]**2
     r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
-    mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
+    mean_dist=np.mean([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
     median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
     dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
     print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
            +"mean error "+str(mean_dist)+"\n"
            +"median error "+str(median_dist)+"\n")
 hist=pd.DataFrame(history.history)
-hist.to_csv(os.path.join(args.outdir,args.outname+"_history.txt"),sep="\t",index=False)
+hist.to_csv(args.out+"_history.txt",sep="\t",index=False)
 
 end=time.time()
 elapsed=end-start
+print("run time "+str(elapsed/60)+" minutes")
 
 if not args.summary_out==None:
-    row=[args.width,args.dropout_prop,args.max_SNPs,elapsed,mean_dist,median_dist]
+    row=[args.zarr,args.width,args.dropout_prop,args.max_SNPs,elapsed,mean_dist,median_dist]
     row=row+dists
     row=[str(x) for x in row]
     row=" ".join(row)+'\n'
@@ -404,24 +391,31 @@ if args.plot:
     fig = plt.figure(figsize=(4,2),dpi=200)
     plt.rcParams.update({'font.size': 7})
     ax1=fig.add_axes([0,.59,0.25,.375])
-    ax1.plot(history.history['val_loss'][5:],"-",color="black",lw=0.5)
+    ax1.plot(history.history['val_loss'][3:],"-",color="black",lw=0.5)
     ax1.set_xlabel("Validation Loss")
     ax1.set_yscale("log")
 
     ax2=fig.add_axes([0,0,0.25,.375])
-    ax2.plot(history.history['loss'][5:],"-",color="black",lw=0.5)
+    ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
     ax2.set_xlabel("Training Loss")
     ax2.set_yscale("log")
 
     ax3=fig.add_axes([0.44,0.01,0.55,.94])
     ax3.scatter(testlocs[:,0],testlocs[:,1],s=4,linewidth=.4,facecolors="none",edgecolors="black")
-    ax3.scatter(prediction[:,0],prediction[:,1],s=2,color="black")
-    for x in range(len(pred)):
-        ax3.plot([prediction[x,0],testlocs[x,0]],[prediction[x,1],testlocs[x,1]],lw=.3,color="black")
+    if args.mode=="predict":
+        ax3.scatter(p2[:,0],p2[:,1],s=2,color="black")
+    else:
+        ax3.scatter(prediction[:,0],prediction[:,1],s=2,color="black")
+    if args.mode=="predict":
+        for x in range(p2.shape[0]):
+            ax3.plot([p2[x,0],testlocs[x,0]],[p2[x,1],testlocs[x,1]],lw=.3,color="black")
+    else:
+        for x in range(prediction.shape[0]):
+            ax3.plot([prediction[x,0],testlocs[x,0]],[prediction[x,1],testlocs[x,1]],lw=.3,color="black")
     #ax3.set_xlabel("simulated X coordinate")
     #ax3.set_ylabel("predicted X coordinate")
     #ax3.set_title(r"$R^2$="+str(round(cor[0][1]**2,4)))
-    fig.savefig(os.path.join(args.outdir,args.outname+"_fitplot.pdf"),bbox_inches='tight')
+    fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
 
 #debugging params
 # args=argparse.Namespace(vcf="/Users/cj/locator/data/pabu_c85h60.vcf",
@@ -433,7 +427,7 @@ if args.plot:
 #                         impute_missing=True,
 #                         max_SNPs=100,
 #                         min_mac=2,
-#                         outname="anopheles_2L_1e6-2.5e6",
+#                         out="anopheles_2L_1e6-2.5e6",
 #                         model="dense",
 #                         outdir="/Users/cj/locator/out/",
 #                         mode="cv",
