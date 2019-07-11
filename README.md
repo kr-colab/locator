@@ -26,10 +26,11 @@ python scripts/locator_dev.py --vcf data/test_genotypes.vcf.gz --sample_data dat
 ```
 
 This should produce 4 files: 
-test_predlocs.txt -- predicted locations \\
-test_history.txt -- training history \\
-test_weights.hdf5 -- model weights \\
-test_fitplot.pdf -- plot of training history \\
+
+test_predlocs.txt -- predicted locations   
+test_history.txt -- training history  
+test_weights.hdf5 -- model weights   
+test_fitplot.pdf -- plot of training history   
 
 This takes ~1 minute running on 12 CPU cores. 
 
