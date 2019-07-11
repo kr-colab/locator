@@ -57,10 +57,7 @@ do
 		python scripts/locator.py \
 		--vcf data/ag1000g/tmp.vcf \
 		--sample_data data/ag1000g/ag1000g.phase1.samples.locsplit.txt \
-		--out out/ag1000g/$chr\_$startwindow\_$endwindow \
-		--patience 100 --impute_missing True --normalize True \
-		--nlayers 10 --width 256 --batch_size 32 --gpu_number 1 \
-		--min_mac 2
+		--out out/ag1000g/$chr\_$startwindow\_$endwindow
 		
 		endwindow=$((endwindow+step))
 		rm data/ag1000g/tmp.vcf
