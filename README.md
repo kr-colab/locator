@@ -18,8 +18,8 @@ instructions can be found at https://www.tensorflow.org/install/gpu).
 
 # Examples
 
-This command will fit a cross-validation locator model to a simulated test dataset of 
-~10,000 SNPs and 500 individuals.  
+This command will fit a model to a simulated test dataset of 
+~10,000 SNPs and 450 individuals and predict the locations of 50 validation samples. 
 
 ```
 python scripts/locator_dev.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
