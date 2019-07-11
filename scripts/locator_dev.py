@@ -1,11 +1,12 @@
 #estimating sample locations from genotype matrices
-import allel, re, os, keras, matplotlib, sys, zarr, numcodecs, time, subprocess
+import allel, re, os, keras, matplotlib, sys, zarr, time, subprocess
 import numpy as np, pandas as pd, tensorflow as tf
 from scipy import spatial
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
-from sklearn.preprocessing import normalize,scale
+import gnuplotlib as gp
+sys.tracebacklimit = 0
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -30,7 +31,7 @@ parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
 parser.add_argument("--boot",default="False",type=str,
-                    help="Run bootstrap replicates? (requires --nboot).\
+                    help="Run bootstrap replicates?\
                     default: False.")
 parser.add_argument("--nboots",default=50,type=int,
                     help="number of bootstrap replicates to run.\
@@ -51,9 +52,9 @@ parser.add_argument("--max_SNPs",default=None,type=int,
                     default: None.")
 parser.add_argument("--impute_missing",default="True",type=str,
                     help='default: True (if False, all alleles at missing sites are ancestral)')
-parser.add_argument("--dropout_prop",default=0.5,type=float,
+parser.add_argument("--dropout_prop",default=0.25,type=float,
                     help="proportion of weights to drop at the dropout layer. \
-                          default: 0.5")
+                          default: 0.25")
 parser.add_argument("--nlayers",default=10,type=int,
                     help="if model=='dense', number of fully-connected \
                     layers in the network. \
@@ -69,9 +70,9 @@ parser.add_argument("--n_predictions",default=1,type=int,
                     help="if >1, number of predictions to generate \
                           for uncertainty estimation via droupout. \
                           default: 1")
-parser.add_argument('--plot_history',default=False,type=bool,
+parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
-                    default: False")
+                    default: True")
 parser.add_argument('--summary_out',default=None,type=str,
                     help="file path to write mean, median, and validation error for all \
                     points to file. default: None")
@@ -206,7 +207,6 @@ def load_network(traingen,dropout_prop):
         model.add(layers.Dense(args.width,activation="elu"))
     if args.dropout_prop > 0:
         if args.n_predictions > 1:
-            #model.add(layers.Dropout(args.dropout_prop))
             model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop)))
         else:
             model.add(layers.Dropout(args.dropout_prop))
@@ -309,24 +309,35 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
                +"median error "+str(median_dist)+"\n")
     hist=pd.DataFrame(history.history)
     hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps
+    x = np.arange(1000)
+    gp.plot((np.array(dists),
+             dict(histogram = 'freq',binwidth=np.std(dists)/5)),
+            unset='grid',
+            terminal='dumb 60 20',
+            title='Test Error')
     keras.backend.clear_session()
 
 def plot_history(history):
     if args.plot_history:
         plt.switch_backend('agg')
-        fig = plt.figure(figsize=(4,2),dpi=200)
+        fig = plt.figure(figsize=(4,1.5),dpi=200)
         plt.rcParams.update({'font.size': 7})
-        ax1=fig.add_axes([0,.5,0.5,.1])
+        ax1=fig.add_axes([0,0,0.4,1])
         ax1.plot(history.history['val_loss'][3:],"-",color="black",lw=0.5)
         ax1.set_xlabel("Validation Loss")
-        ax1.set_yscale("log")
+        #ax1.set_yscale("log")
 
-        ax2=fig.add_axes([0,0,0.25,.375])
+        ax2=fig.add_axes([0.55,0,0.4,1])
         ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
         ax2.set_xlabel("Training Loss")
-        ax2.set_yscale("log")
+        #ax2.set_yscale("log")
 
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
+        gp.plot(np.array(history.history['val_loss'][3:]),
+                unset='grid',
+                terminal='dumb 60 20',
+                #set= 'logscale y',
+                title='Validation Loss by Epoch')
 
 #######################################################################
 dropout_prop=args.dropout_prop
@@ -367,7 +378,7 @@ elif args.boot in ['True','TRUE','T','true','t']:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
         elapsed=end-start
-        print("run time "+str(elapsed/60)+" minutes")
+        print("run time "+str(elapsed/60)+" minutes\n\n")
 
 
 
