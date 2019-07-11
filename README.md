@@ -7,7 +7,7 @@ genotype or sequencing data.
 
 Locator requires python3 and the following packages:
 ```
-allel, zarr, numpy, pandas, tensorflow, keras, and scipy. 
+allel, zarr, numpy, pandas, tensorflow, keras, scipy 
 ```
 
 [[add links for installations and conda instructions]]
