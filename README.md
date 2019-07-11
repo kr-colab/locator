@@ -18,20 +18,21 @@ instructions can be found at https://www.tensorflow.org/install/gpu).
 
 # Examples
 
-This command will fit a cross-validation locator model to a simulated test dataset of 
-~10,000 SNPs and 500 individuals.  
+This command will fit a model to a simulated test dataset of 
+~10,000 SNPs and 450 individuals and predict the locations of 50 validation samples. 
 
 ```
 python scripts/locator_dev.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
 ```
 
-This should produce 4 files: 
-test_predlocs.txt -- predicted locations
-test_history.txt -- training history
-test_weights.hdf5 -- model weights
-test_fitplot.pdf -- plot of training history
+It should produce 4 files: 
 
-This takes ~1 minute running on 12 CPU cores. 
+test_predlocs.txt -- predicted locations   
+test_history.txt -- training history  
+test_weights.hdf5 -- model weights   
+test_fitplot.pdf -- plot of training history   
+
+[[add more stuff here]]
 
 You can run a windowed analysis by subsetting a starting VCF with Tabix:
 
@@ -57,10 +58,7 @@ do
 		python scripts/locator.py \
 		--vcf data/ag1000g/tmp.vcf \
 		--sample_data data/ag1000g/ag1000g.phase1.samples.locsplit.txt \
-		--out out/ag1000g/$chr\_$startwindow\_$endwindow \
-		--patience 100 --impute_missing True --normalize True \
-		--nlayers 10 --width 256 --batch_size 32 --gpu_number 1 \
-		--min_mac 2
+		--out out/ag1000g/$chr\_$startwindow\_$endwindow
 		
 		endwindow=$((endwindow+step))
 		rm data/ag1000g/tmp.vcf
