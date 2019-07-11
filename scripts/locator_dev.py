@@ -1,20 +1,11 @@
 #estimating sample locations from genotype matrices
-import allel, re, os, keras, matplotlib, sys
+import allel, re, os, keras, matplotlib, sys, zarr, numcodecs, time, subprocess
 import numpy as np, pandas as pd, tensorflow as tf
 from scipy import spatial
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
-import zarr
-import numcodecs
 from sklearn.preprocessing import normalize,scale
-import time
-#config = tensorflow.ConfigProto(device_count={'CPU': 60})
-#sess = tensorflow.Session(config=config)
-# config = tf.ConfigProto()
-# config.intra_op_parallelism_threads = 44
-# config.inter_op_parallelism_threads = 44
-# tf.Session(config=config)
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -24,48 +15,45 @@ parser.add_argument("--sample_data",
                          'sampleID \t longitude \t latitude'.\
                           SampleIDs must exactly match those in the \
                           training VCF. Longitude and latitude for \
-                          samples without known geographic origin should \
-                          be NA. By default, locations will be predicted \
-                          for all samples without locations. If the \
-                          train_split parameter is provided, locations \
-                          will be predicted for randomly selected \
-                          individuals.")
+                          samples without known locations should \
+                          be NA. If a column named 'test' \
+                          is included, samples with test==True will be \
+                          used as the test set (currently cv mode only).")
 parser.add_argument("--mode",default="cv",
                     help="'cv' splits the sample by train_split \
                           and predicts on the test set. \
                           'predict' extracts samples with non-NaN \
                           coordinates, splits those by train_split \
-                          for training and evaluation, and returns \
+                          for training and model evaluation, and returns \
                           predictions for samples with NaN coordinates.")
-parser.add_argument("--locality_split",default="False",type=str,
-                    help="Split training and testing evenly by locality. \
-                          default: False")
 parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
+parser.add_argument("--boot",default="False",type=str,
+                    help="Run bootstrap replicates? (requires --nboot).\
+                    default: False.")
+parser.add_argument("--nboots",default=50,type=int,
+                    help="number of bootstrap replicates to run.\
+                    default: 50")
 parser.add_argument("--batch_size",default=128,type=int,
-                    help="default: 128")
+                    help="default: 32")
 parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
-parser.add_argument("--patience",type=int,default=500,
+parser.add_argument("--patience",type=int,default=100,
                     help="n epochs to run the optimizer after last \
                           improved val_loss before stopping the run. \
-                          default: 500")
+                          default: 100")
 parser.add_argument("--min_mac",default=2,type=int,
                     help="minimum minor allele count.\
                           default: 2.")
 parser.add_argument("--max_SNPs",default=None,type=int,
                     help="randomly select max_SNPs variants to use in the analysis \
                     default: None.")
-parser.add_argument("--impute_missing",default="False",type=str,
-                    help='default: False')
-parser.add_argument("--model",default="dense",
-                    help="Select network architecture. options: 'dense', \
-                    'CNN','GRU' (CNN and GRU not recommended for now).\
-                    default:'dense'")
-parser.add_argument("--dropout_prop",default=0.25,type=float,
+parser.add_argument("--impute_missing",default="True",type=str,
+                    help='default: True (if False, all alleles at missing sites are ancestral)')
+parser.add_argument("--dropout_prop",default=0.5,type=float,
                     help="proportion of weights to drop at the dropout layer. \
-                          default: 0.25")
+                          default: 0.5")
 parser.add_argument("--nlayers",default=10,type=int,
                     help="if model=='dense', number of fully-connected \
                     layers in the network. \
@@ -74,9 +62,6 @@ parser.add_argument("--width",default=256,type=int,
                     help="if model==dense, width of layers in the network\
                     default:256")
 parser.add_argument("--out",help="file name stem for output")
-parser.add_argument("--normalize",default=True,type=bool,
-                    help="normalize genotypes and locations before inference?\
-                          default: True")
 parser.add_argument("--seed",default=None,type=int,
                     help="random seed used for train/test splits and max_SNPs.")
 parser.add_argument("--gpu_number",default=None,type=str)
@@ -84,46 +69,21 @@ parser.add_argument("--n_predictions",default=1,type=int,
                     help="if >1, number of predictions to generate \
                           for uncertainty estimation via droupout. \
                           default: 1")
-parser.add_argument('--plot',default=False,type=bool,
-                    help="produce a plot summarizing training and output? \
-                          probably broken.\ default: False")
+parser.add_argument('--plot_history',default=False,type=bool,
+                    help="plot training history? \
+                    default: False")
 parser.add_argument('--summary_out',default=None,type=str,
                     help="file path to write mean, median, and validation error for all \
                     points to file. default: None")
+parser.add_argument('--keep_weights',default='True',type=str,
+                    help='keep model weights after training? \
+                    default: True.')
 args=parser.parse_args()
 
 if not args.seed==None:
     np.random.seed(args.seed)
 if not args.gpu_number==None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
-
-def split_by_locality(): #note: this seems to make things worse...
-    if args.mode=="predict":
-        ntrain=len(train)
-    else:
-        ntrain=round(len(locs)*args.train_split)
-    ntest=len(locs)-ntrain
-    l2=np.unique(locs[:,0])
-    l2=l2[~np.isnan(l2)]
-    pop_indices=[]
-    for i in l2: #get sample indices for each locality
-        popinds=np.argwhere(locs[:,0]==i)
-        popinds=[x[0] for x in popinds]
-        pop_indices.append(popinds)
-    test=[]
-    while len(test)<ntest: #sample one ind per locality until you reach ntest samples
-        pop_indices=np.array(pop_indices)[np.random.choice(range(len(pop_indices)),len(pop_indices),replace=False)]
-        for i in pop_indices:
-            if len(test)<ntest:
-                k=np.random.choice(i)
-                if not k in test:
-                    test.append(k)
-    test=np.array(test)
-    if args.mode=="predict":
-        train=np.array([x for x in train if x not in test])
-    elif args.mode=="cv":
-        train=np.array([x for x in range(len(locs)) if x not in test])
-    return test,train
 
 #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes,impute):
@@ -145,273 +105,292 @@ def replace_md(genotypes,impute):
     return ac
 
 #load genotype matrices
-if args.zarr is not None:
-    print("reading zarr")
-    callset = zarr.open_group(args.zarr, mode='r')
-    gt = callset['calldata/GT']
-    genotypes = allel.GenotypeArray(gt[:])
-    samples = callset['samples'][:]
-else:
-    print("reading VCF")
-    vcf=allel.read_vcf(args.vcf,log=sys.stderr)
-    genotypes=allel.GenotypeArray(vcf['calldata/GT'])
-    samples=vcf['samples']
+def load_genotypes():
+    if args.zarr is not None:
+        print("reading zarr")
+        callset = zarr.open_group(args.zarr, mode='r')
+        gt = callset['calldata/GT']
+        genotypes = allel.GenotypeArray(gt[:])
+        samples = callset['samples'][:]
+    else:
+        print("reading VCF")
+        vcf=allel.read_vcf(args.vcf,log=sys.stderr)
+        genotypes=allel.GenotypeArray(vcf['calldata/GT'])
+        samples=vcf['samples']
+    return genotypes,samples
 
-#load and sort sample data to match VCF sample order
-sample_data=pd.read_csv(args.sample_data,sep="\t")
-sample_data['sampleID2']=sample_data['sampleID']
-sample_data.set_index('sampleID',inplace=True)
-sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
-if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
-    print("sample ordering failed! Check that sample IDs match the VCF.")
-    sys.exit()
-locs=np.array(sample_data[["longitude","latitude"]])
-print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
+#sort sample data
+def sort_samples(samples):
+    sample_data=pd.read_csv(args.sample_data,sep="\t")
+    sample_data['sampleID2']=sample_data['sampleID']
+    sample_data.set_index('sampleID',inplace=True)
+    sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
+    if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
+        print("sample ordering failed! Check that sample IDs match the VCF.")
+        sys.exit()
+    locs=np.array(sample_data[["longitude","latitude"]])
+    print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
+    return(sample_data,locs)
 
 #SNP filters
-print("filtering SNPs")
-if not args.min_mac==None:
-    derived_counts=genotypes.count_alleles()[:,1]
-    ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
-    genotypes=genotypes[ac_filter,:,:]
-if args.impute_missing in ['TRUE','true','True',"T","t",True]:
-    ac=replace_md(genotypes,impute=True)
-else:
-    ac=replace_md(genotypes,impute=False)
-if not args.max_SNPs==None:
-    ac=ac[np.random.choice(range(ac.shape[0]),args.max_SNPs,replace=False),:]
-print("running on "+str(len(ac))+" genotypes after filtering\n\n\n")
+def filter_snps(genotypes):
+    if not args.min_mac==None:
+        derived_counts=genotypes.count_alleles()[:,1]
+        ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
+        genotypes=genotypes[ac_filter,:,:]
+    if args.impute_missing in ['TRUE','true','True',"T","t",True]:
+        ac=replace_md(genotypes,impute=True)
+    else:
+        ac=genotypes.to_allele_counts()[:,:,1]
+    if not args.max_SNPs==None:
+        ac=ac[np.random.choice(range(ac.shape[0]),args.max_SNPs,replace=False),:]
+    print("running on "+str(len(ac))+" genotypes after filtering\n\n\n")
+    return ac
 
-#normalize coordinates and genotypes
-if args.normalize==True:
+#normalize coordinates
+def normalize_locs(locs):
     meanlong=np.nanmean(locs[:,0])
     sdlong=np.nanstd(locs[:,0])
     meanlat=np.nanmean(locs[:,1])
     sdlat=np.nanstd(locs[:,1])
     locs=np.array([[(x[0]-meanlong)/sdlong,(x[1]-meanlat)/sdlat] for x in locs])
-    ac=normalize(ac,axis=0,norm='l2')
-    #ac=scale(ac,axis=0) #l2 norm seems to work better (but why?)
+    return meanlong,sdlong,meanlat,sdlat,locs
 
-#split training, testing, and prediction sets
-if args.mode=="predict": #NOTE: refactor and test with pabu...
-    train=np.argwhere(~np.isnan(locs[:,0]))
-    train=np.array([x[0] for x in train])
-    pred=np.array([x for x in range(len(locs)) if not x in train])
-    if(args.locality_split in ['T','t','True','TRUE','true',True]):
-        print("splitting train/test by locality")
-        test,train=split_by_locality()
-    else:
-        test=np.random.choice(train,round((1-args.train_split)*len(train)),replace=False)
+def split_train_test(ac,locs):
+    #split training, testing, and prediction sets
+    if args.mode=="predict": #TODO: add manual test splits to pred mode
+        train=np.argwhere(~np.isnan(locs[:,0]))
+        train=np.array([x[0] for x in train])
+        pred=np.array([x for x in range(len(locs)) if not x in train])
+        test=np.random.choice(train,
+                              round((1-args.train_split)*len(train)),
+                              replace=False)
         train=np.array([x for x in train if x not in test])
-    traingen=np.transpose(ac[:,train])
-    trainlocs=locs[train]
-    testgen=np.transpose(ac[:,test])
-    testlocs=locs[test]
-    predgen=np.transpose(ac[:,pred])
-elif args.mode=="cv": #cross-validation mode
-    if args.locality_split in ['T','t','True','TRUE','true',True]:
-        print("splitting train/test by locality")
-        test,train=split_by_locality()
+        traingen=np.transpose(ac[:,train])
+        trainlocs=locs[train]
+        testgen=np.transpose(ac[:,test])
+        testlocs=locs[test]
+        predgen=np.transpose(ac[:,pred])
+    elif args.mode=="cv": #cross-validation mode
+        if 'test' in sample_data.keys():
+            train=np.argwhere(sample_data['test']==False)
+            test=np.argwhere(sample_data['test']==True)
+            train=np.array([x[0] for x in train])
+            test=np.array([x[0] for x in test])
+        else:
+            train=np.random.choice(range(len(locs)),
+                                   round(args.train_split*len(locs)),
+                                   replace=False)
+            test=np.array([x for x in range(len(locs)) if not x in train])
         pred=test
-    else:
-        train=np.random.choice(range(len(locs)),
-                               round(args.train_split*len(locs)),
-                               replace=False)
-        test=np.array([x for x in range(len(locs)) if not x in train])
-        pred=test
-    traingen=np.transpose(ac[:,train])
-    trainlocs=locs[train]
-    testgen=np.transpose(ac[:,test])
-    testlocs=locs[test]
-    predgen=testgen
+        traingen=np.transpose(ac[:,train])
+        trainlocs=locs[train]
+        testgen=np.transpose(ac[:,test])
+        testlocs=locs[test]
+        predgen=testgen
+    return train,test,traingen,testgen,trainlocs,testlocs,pred,predgen
 
-start=time.time()
-#define networks
-from keras.models import Sequential
-from keras import layers
-from keras.layers.core import Lambda
-from keras import backend as K
-import keras
+def load_network(traingen,dropout_prop):
+    from keras.models import Sequential
+    from keras import layers
+    from keras.layers.core import Lambda
+    from keras import backend as K
+    import keras
 
-def euclidean_distance_loss(y_true, y_pred):
-    return K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
+    def euclidean_distance_loss(y_true, y_pred):
+        return K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
 
-def normal_error_loss(y_true,y_pred):
-    dist=K.sqrt(K.sum(K.square(y_pred[:,:1] - y_true),axis=-1))
-    true_x=y_true[:,0]
-    true_y=y_true[:,1]
-    mean_x=y_pred[:,0]
-    mean_y=y_pred[:,1]
-    var_x=y_pred[:,2]
-    var_y=y_pred[:,3]
-    loss_x=((((true_x-mean_x)**2)/var_x)+K.log(var_x))/2
-    loss_y=((((true_y-mean_y)**2)/var_y)+K.log(var_y))/2
-    return loss_x+loss_y
-
-#dense model builder
-if args.model=="dense":
-    train_x=traingen
-    test_x=testgen
-    pred_x=predgen
     model = Sequential()
-    model.add(layers.BatchNormalization(input_shape=(train_x.shape[1],)))
-    #model.add(layers.Dense(args.width,activation="elu"))
+    model.add(layers.BatchNormalization(input_shape=(traingen.shape[1],)))
     for i in range(int(np.floor(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
     if args.dropout_prop > 0:
-        model.add(layers.Dropout(args.dropout_prop))
+        if args.n_predictions > 1:
+            #model.add(layers.Dropout(args.dropout_prop))
+            model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop)))
+        else:
+            model.add(layers.Dropout(args.dropout_prop))
     for i in range(int(np.ceil(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
-    model.add(layers.Dense(4))
-    model.add(layers.Dense(4))
-    model.compile(optimizer="Adam",
-                  loss=normal_error_loss)
-
-#other custom models
-if args.model=="CNN":
-    train_x=traingen.reshape(traingen.shape+(1,))
-    test_x=testgen.reshape(testgen.shape+(1,))
-    pred_x=predgen.reshape(predgen.shape+(1,))
-    model = Sequential()
-    model.add(layers.Conv1D(64, 7, activation='relu',input_shape=(np.shape(train_x)[1],1)))
-    model.add(layers.MaxPooling1D(5))
-    model.add(layers.Conv1D(32, 7, activation='relu'))
-    model.add(layers.GlobalMaxPooling1D())
+    model.add(layers.Dense(2))
     model.add(layers.Dense(2))
     model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-
-if args.model=="GRU":
-    # this GRU runs on GPUs only, so needs smaller batch sizes than default
-    train_x=traingen.reshape(traingen.shape+(1,))
-    test_x=testgen.reshape(testgen.shape+(1,))
-    pred_x=predgen.reshape(predgen.shape+(1,))
-    print(np.shape(train_x))
-    model = Sequential()
-    model.add(layers.CuDNNGRU(256, input_shape=(np.shape(train_x)[1],1)))
-    model.add(layers.Dense(2))
-    model.compile(optimizer="Adam",
-                  loss=euclidean_distance_loss,
-                  metrics=['mae'])
-    model.summary()
-
+                  loss=euclidean_distance_loss)
+    return model
 
 #fit model and choose best weights
-tart=time.time()
-checkpointer=keras.callbacks.ModelCheckpoint(
-              filepath=args.out+"_weights.hdf5",
-              verbose=0,
-              save_best_only=True,
-              monitor="val_loss",
-              period=1)
-earlystop=keras.callbacks.EarlyStopping(monitor="val_loss",
-                                        min_delta=0,
-                                        patience=args.patience)
-history = model.fit(train_x, trainlocs,
-                    epochs=args.max_epochs,
-                    batch_size=args.batch_size,
-                    shuffle=True,
-                    verbose=1,
-                    validation_data=(test_x,testlocs),
-                    callbacks=[checkpointer,earlystop])
-model.load_weights(args.out+"_weights.hdf5")
+def load_callbacks(boot):
+    if args.boot in ['True','true','TRUE','t','T']:
+        checkpointer=keras.callbacks.ModelCheckpoint(
+                      filepath=args.out+"_boot"+str(boot)+"_weights.hdf5",
+                      verbose=1,
+                      save_best_only=True,
+                      save_weights_only=True,
+                      monitor="val_loss",
+                      period=1)
+    else:
+        checkpointer=keras.callbacks.ModelCheckpoint(
+                      filepath=args.out+"_weights.hdf5",
+                      verbose=1,
+                      save_best_only=True,
+                      save_weights_only=True,
+                      monitor="val_loss",
+                      period=1)
+    earlystop=keras.callbacks.EarlyStopping(monitor="val_loss",
+                                            min_delta=0,
+                                            patience=args.patience)
+    reducelr=keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
+                                               factor=0.5,
+                                               patience=int(args.patience/4),
+                                               verbose=1,
+                                               mode='auto',
+                                               min_delta=0,
+                                               cooldown=0,
+                                               min_lr=0)
+    return checkpointer,earlystop,reducelr
+
+def train_network(model,traingen,testgen,trainlocs,testlocs):
+    history = model.fit(traingen, trainlocs,
+                        epochs=args.max_epochs,
+                        batch_size=args.batch_size,
+                        shuffle=True,
+                        verbose=1,
+                        validation_data=(testgen,testlocs),
+                        callbacks=[checkpointer,earlystop,reducelr])
+    if args.boot in ['True','true','TRUE','T','t']:
+        model.load_weights(args.out+"_boot"+str(boot)+"_weights.hdf5")
+    else:
+        model.load_weights(args.out+"_weights.hdf5")
+    return history,model
 
 #predict and plot
-print("predicting locations...")
-prediction=model.predict(pred_x)
-if args.normalize==True:
-    prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
-predout=pd.DataFrame(prediction)
-predout['sampleID']=samples[pred]
-predout.to_csv(args.out+"_predlocs.txt")
-
-if args.normalize==True:
-    testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
-
-#print correlation coefficient for longitude
-if args.mode=="cv":
-    r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
-    r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
-    mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-    median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-    dists=[spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))]
-    print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
-           +"mean error "+str(mean_dist)+"\n"
-           +"median error "+str(median_dist)+"\n")
-elif args.mode=="predict":
-    p2=model.predict(test_x)
-    p2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in p2])
-    r2_long=np.corrcoef(p2[:,0],testlocs[:,0])[0][1]**2
-    r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
-    mean_dist=np.mean([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
-    median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
-    dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
-    print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
-           +"mean error "+str(mean_dist)+"\n"
-           +"median error "+str(median_dist)+"\n")
-hist=pd.DataFrame(history.history)
-hist.to_csv(args.out+"_history.txt",sep="\t",index=False)
-
-end=time.time()
-elapsed=end-start
-print("run time "+str(elapsed/60)+" minutes")
-
-if not args.summary_out==None:
-    row=[args.zarr,args.width,args.dropout_prop,args.max_SNPs,elapsed,mean_dist,median_dist]
-    row=row+dists
-    row=[str(x) for x in row]
-    row=" ".join(row)+'\n'
-    out=open(args.summary_out,"a")
-    out.write(row)
-    out.close()
-
-if args.plot:
-    plt.switch_backend('agg')
-    fig = plt.figure(figsize=(4,2),dpi=200)
-    plt.rcParams.update({'font.size': 7})
-    ax1=fig.add_axes([0,.59,0.25,.375])
-    ax1.plot(history.history['val_loss'][3:],"-",color="black",lw=0.5)
-    ax1.set_xlabel("Validation Loss")
-    ax1.set_yscale("log")
-
-    ax2=fig.add_axes([0,0,0.25,.375])
-    ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
-    ax2.set_xlabel("Training Loss")
-    ax2.set_yscale("log")
-
-    ax3=fig.add_axes([0.44,0.01,0.55,.94])
-    ax3.scatter(testlocs[:,0],testlocs[:,1],s=4,linewidth=.4,facecolors="none",edgecolors="black")
-    if args.mode=="predict":
-        ax3.scatter(p2[:,0],p2[:,1],s=2,color="black")
+def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
+    import keras
+    print("predicting locations...")
+    for i in tqdm(range(args.n_predictions)):
+        prediction=model.predict(predgen)
+        prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
+        if i==0:
+            predictions=prediction
+        else:
+            predictions=np.concatenate((predictions,prediction),axis=0)
+    predout=pd.DataFrame(predictions)
+    s2=[samples[pred] for x in range(args.n_predictions)]
+    predout['sampleID']=[x for y in s2 for x in y]
+    s3=[np.repeat(x,prediction.shape[0]) for x in range(args.n_predictions)]
+    predout['prediction']=[x for y in s3 for x in y]
+    if args.boot in ['TRUE','True','true','T','t']:
+        predout.to_csv(args.out+"_boot"+str(boot)+"_predlocs.txt",index=False)
+        testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
     else:
-        ax3.scatter(prediction[:,0],prediction[:,1],s=2,color="black")
-    if args.mode=="predict":
-        for x in range(p2.shape[0]):
-            ax3.plot([p2[x,0],testlocs[x,0]],[p2[x,1],testlocs[x,1]],lw=.3,color="black")
-    else:
-        for x in range(prediction.shape[0]):
-            ax3.plot([prediction[x,0],testlocs[x,0]],[prediction[x,1],testlocs[x,1]],lw=.3,color="black")
-    #ax3.set_xlabel("simulated X coordinate")
-    #ax3.set_ylabel("predicted X coordinate")
-    #ax3.set_title(r"$R^2$="+str(round(cor[0][1]**2,4)))
-    fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
+        predout.to_csv(args.out+"_predlocs.txt",index=False)
+        testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
 
-#debugging params
-args=argparse.Namespace(vcf="/Users/cj/locator/data/pabu_c85h60.vcf",
-                        sample_data="/Users/cj/locator/data/pabu_sample_data.txt",
-                        train_split=0.8,
-                        batch_size=128,
-                        max_epochs=5000,
-                        patience=200,
-                        impute_missing=True,
-                        max_SNPs=100,
-                        min_mac=2,
-                        out="anopheles_2L_1e6-2.5e6",
-                        model="dense",
-                        outdir="/Users/cj/locator/out/",
-                        mode="cv",
-                        locality_split=True,
-                        droupout_prop=0.25,
-                        gpu_number="0",
-                        n_predictions=100)
+    #print correlation coefficient for longitude
+    if args.mode=="cv":
+        r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
+        r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
+        mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
+        median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
+        dists=[spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))]
+        print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+               +"mean error "+str(mean_dist)+"\n"
+               +"median error "+str(median_dist)+"\n")
+    elif args.mode=="predict":
+        p2=model.predict(test_x)
+        p2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in p2])
+        r2_long=np.corrcoef(p2[:,0],testlocs[:,0])[0][1]**2
+        r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
+        mean_dist=np.mean([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
+        median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
+        dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
+        print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+               +"mean error "+str(mean_dist)+"\n"
+               +"median error "+str(median_dist)+"\n")
+    hist=pd.DataFrame(history.history)
+    hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps
+    keras.backend.clear_session()
+
+def plot_history(history):
+    if args.plot_history:
+        plt.switch_backend('agg')
+        fig = plt.figure(figsize=(4,2),dpi=200)
+        plt.rcParams.update({'font.size': 7})
+        ax1=fig.add_axes([0,.5,0.5,.1])
+        ax1.plot(history.history['val_loss'][3:],"-",color="black",lw=0.5)
+        ax1.set_xlabel("Validation Loss")
+        ax1.set_yscale("log")
+
+        ax2=fig.add_axes([0,0,0.25,.375])
+        ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
+        ax2.set_xlabel("Training Loss")
+        ax2.set_yscale("log")
+
+        fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
+
+#######################################################################
+dropout_prop=args.dropout_prop
+if args.boot in ['False','FALSE','F','false','f']:
+    boot=None
+    genotypes,samples=load_genotypes()
+    sample_data,locs=sort_samples(samples)
+    meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
+    ac=filter_snps(genotypes)
+    checkpointer,earlystop,reducelr=load_callbacks(boot)
+    train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+    model=load_network(traingen,dropout_prop)
+    start=time.time()
+    history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+    predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+    plot_history(history)
+    if args.keep_weights in ['False','F','FALSE','f','false']:
+        subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
+    end=time.time()
+    elapsed=end-start
+    print("run time "+str(elapsed/60)+" minutes")
+elif args.boot in ['True','TRUE','T','true','t']:
+    genotypes,samples=load_genotypes()
+    sample_data,locs=sort_samples(samples)
+    meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
+    ac=filter_snps(genotypes)
+    for boot in range(args.nboots):
+        checkpointer,earlystop,reducelr=load_callbacks(boot)
+        print("starting bootstrap "+str(boot))
+        ac_boot=ac[np.random.choice(ac.shape[0],ac.shape[0],replace=True),:]
+        train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac_boot,locs)
+        model=load_network(traingen,dropout_prop)
+        start=time.time()
+        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+        predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+        plot_history(history)
+        if args.keep_weights in ['False','F','FALSE','f','false']:
+            subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
+        end=time.time()
+        elapsed=end-start
+        print("run time "+str(elapsed/60)+" minutes")
+
+
+
+#
+# #debugging params
+# args=argparse.Namespace(vcf="/Users/cj/locator/data/ag1000g/ag1000g2L_1e6_to_2.5e6.vcf.gz",
+#                         sample_data="/Users/cj/locator/data/ag1000g/anopheles_samples_sp.txt",
+#                         train_split=0.8,
+#                         zarr=None,
+#                         boot=False,
+#                         nlayers=10,
+#                         width=256,
+#                         batch_size=128,
+#                         max_epochs=5000,
+#                         patience=200,
+#                         impute_missing=True,
+#                         max_SNPs=100,
+#                         min_mac=2,
+#                         out="anopheles_2L_1e6-2.5e6",
+#                         model="dense",
+#                         outdir="/Users/cj/locator/out/",
+#                         mode="cv",
+#                         locality_split=True,
+#                         dropout_prop=0.5,
+#                         gpu_number="0",
+#                         n_predictions=100)
