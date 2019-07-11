@@ -25,14 +25,14 @@ This command will fit a cross-validation locator model to a simulated test datas
 python scripts/locator_dev.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
 ```
 
-This should produce 4 files: 
+It should produce 4 files: 
 
 test_predlocs.txt -- predicted locations   
 test_history.txt -- training history  
 test_weights.hdf5 -- model weights   
 test_fitplot.pdf -- plot of training history   
 
-This takes ~1 minute running on 12 CPU cores. 
+[[add more stuff here]]
 
 You can run a windowed analysis by subsetting a starting VCF with Tabix:
 
