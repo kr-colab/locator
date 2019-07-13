@@ -35,7 +35,7 @@ parser.add_argument("--boot",default="False",type=str,
 parser.add_argument("--nboots",default=50,type=int,
                     help="number of bootstrap replicates to run.\
                     default: 50")
-parser.add_argument("--batch_size",default=128,type=int,
+parser.add_argument("--batch_size",default=32,type=int,
                     help="default: 32")
 parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
@@ -75,6 +75,8 @@ parser.add_argument('--plot_history',default=True,type=bool,
 parser.add_argument('--keep_weights',default='True',type=str,
                     help='keep model weights after training? \
                     default: True.')
+parser.add_argument('--predict_from_weights',default='False',type=str,
+                    help='load model weights and predict on all samples')
 args=parser.parse_args()
 
 if not args.seed==None:
