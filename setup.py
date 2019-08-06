@@ -25,7 +25,7 @@ setup(name='Locator',
                         "zarr",
                         "gnuplotlib"],
       scripts=["scripts/locator.py",
-               "scripts/plot_locator.py"],
+               "scripts/plot_locator.R"],
       zip_safe=False,
       setup_requires=[]
 )
