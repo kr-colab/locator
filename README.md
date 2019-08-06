@@ -83,3 +83,12 @@ done
 
 See all parameters with `python scripts/locator_dev.py --h`
 
+# License
+
+This software is available free for all non-commercial use under the non-profit open software license v 3.0 (see LICENSE.txt). Please contact cjbattey@gmail.com to license for commercial use.
+
+
+
+
+
+
