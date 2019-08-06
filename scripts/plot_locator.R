@@ -12,6 +12,8 @@ parser$add_argument('--height',default=4,type="double")
 parser$add_argument('--samples',default=NULL)
 parser$add_argument('--nsamples',default=3)
 parser$add_argument('--ncol',default=3,type="integer")
+parser$add_argument('--points',default="True",type="character")
+parser$add_argument('--contours',default="True",type="character")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -33,7 +35,7 @@ dropout <- args$dropout
 
 kdepred <- function(xcoords,ycoords){
   try({
-    density <- kde2d(xcoords,ycoords,n=500)
+    density <- kde2d(xcoords,ycoords,n=50)
     max_index <- which(density[[3]] == max(density[[3]]), arr.ind = TRUE)
     kd_x <- density[[1]][max_index[1]]
     kd_y  <- density[[2]][max_index[2]]
@@ -52,10 +54,12 @@ if(grepl("predlocs.txt",infile)){
 } else {
   files <- list.files(infile,full.names = T)
   files <- grep("predlocs",files,value=T)
-  pd <- fread(files[1],data.table=F)[-1,-1][0,]
+  pb <- progress_bar$new(total=length(files))
+  pd <- fread(files[1],data.table=F)[0,]
   for(f in files){
-    a <- fread(f,data.table = F)[-1,-1]
+    a <- fread(f,data.table = F)
     pd <- rbind(pd,a)
+    pb$tick()
   }
   names(pd) <- c('xpred','ypred','sampleID')
 }
@@ -119,15 +123,15 @@ for(i in samples){
        ylim=c(min(c(sample$ypred,sample$latitude))-6,
               max(c(sample$ypred,sample$latitude))+6),
        col="grey80",border="white",lwd=0.35)
-  title(sample$sampleID[1],cex.main=0.75,font.main=1)
+  title(sample$sampleID[1],cex.main=0.7,font.main=1)
   box(lwd=1)
   pts <- SpatialPoints(as.matrix(data.frame(sample$xpred,sample$ypred)))
   try({
-    kd <- kde2d(sample$xpred,sample$ypred,n = 100,
-                lims = c(min(c(sample$xpred,sample$longitude))-15,
-                         max(c(sample$xpred,sample$longitude))+15,
-                         min(c(sample$ypred,sample$latitude)-15),
-                         max(c(sample$ypred,sample$latitude))+15))
+    kd <- kde2d(sample$xpred,sample$ypred,n = 50,
+                lims = c(min(c(sample$xpred,sample$longitude))-6,
+                         max(c(sample$xpred,sample$longitude))+6,
+                         min(c(sample$ypred,sample$latitude))-6,
+                         max(c(sample$ypred,sample$latitude))+6))
     prob <- c(.95,.5,.1) #via https://stackoverflow.com/questions/16225530/contours-of-percentiles-on-level-plot
     dx <- diff(kd$x[1:2])
     dy <- diff(kd$y[1:2])
@@ -138,13 +142,17 @@ for(i in samples){
     })
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
-  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=16,cex=0.5,lwd=0.2)
-  points(pts,pch=16,cex=0.3,col=alpha("black",0.8))
-  try({
-    contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
-            labcex=0.25,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
-  },silent=TRUE)
-  points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=16,cex=.9)
+  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=16,cex=0.5)
+  if(args$points %in% c("TRUE","T","t","True","true")){
+    points(pts,pch=1,cex=0.3,col=alpha("black",1),lwd=0.4)
+  }
+  if(args$contours %in% c("TRUE","T","t","True","true")){
+    try({
+      contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
+              labcex=0.25,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
+    },silent=TRUE)
+  }
+  points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=16,cex=.8)
   pb$tick()
 }
 plot(1, type = "n", axes=FALSE, xlab="", ylab="")
