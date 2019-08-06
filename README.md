@@ -5,14 +5,32 @@ genotype or sequencing data.
 
 # Installation 
 
-Locator requires python3 and the following packages:
+Locator requires python3m, gnuplot, and the following packages:
 ```
 allel, zarr, numpy, pandas, tensorflow, keras, scipy 
 ```
 
-[[add links for installations and conda instructions]]
+Gnuplot (http://www.gnuplot.info/) can be installed easily with conda: 
+```
+conda install -c bioconda gnuplot
+```
+homebrew (for macs)
+```
+brew install gnuplot
+```
+or with something like this on Linux
+```
+sudo apt-get install gnuplot
+```
+
+To install the python dependencies, download the repository and run the setup script: 
+```
+git clone https://github.com/cjbattey/locator.git
+cd locator
+python setup.py install
+```
  
-For large datasets or bootstrap uncertainty estimation we recommend you 
+For large datasets or bootstrap uncertainty estimation we strongly recommend you 
 run Locator on a CUDA-enabled GPU (Installation 
 instructions can be found at https://www.tensorflow.org/install/gpu).
 
@@ -22,7 +40,7 @@ This command will fit a model to a simulated test dataset of
 ~10,000 SNPs and 450 individuals and predict the locations of 50 validation samples. 
 
 ```
-python scripts/locator_dev.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
+locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
 ```
 
 It should produce 4 files: 
