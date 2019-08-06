@@ -1,16 +1,17 @@
 # *Locator*
 
 *Locator* is a supervised machine learning method for predicting geographic location from
-genotype or sequencing data. 
+genotype or sequencing data. This package is in active development and probably has some bugs. 
+Use at your own risk! 
 
 # Installation 
 
-*Locator* requires python3m, gnuplot, and the following packages:
+*Locator* requires python3, gnuplot, and the following packages:
 ```
 allel, zarr, numpy, pandas, tensorflow, keras, scipy 
 ```
 
-Gnuplot (http://www.gnuplot.info/) can be installed easily with your favorite package manager, e.g. 
+Gnuplot (http://www.gnuplot.info/) can be installed with your favorite package manager, e.g. 
 ```
 conda install -c bioconda gnuplot #for conda users
 brew install gnuplot #mac 
