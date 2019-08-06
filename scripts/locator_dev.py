@@ -6,7 +6,6 @@ from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
 import gnuplotlib as gp
-sys.tracebacklimit = 0
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -36,7 +35,7 @@ parser.add_argument("--boot",default="False",type=str,
 parser.add_argument("--nboots",default=50,type=int,
                     help="number of bootstrap replicates to run.\
                     default: 50")
-parser.add_argument("--batch_size",default=128,type=int,
+parser.add_argument("--batch_size",default=32,type=int,
                     help="default: 32")
 parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
@@ -73,9 +72,6 @@ parser.add_argument("--n_predictions",default=1,type=int,
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
-parser.add_argument('--summary_out',default=None,type=str,
-                    help="file path to write mean, median, and validation error for all \
-                    points to file. default: None")
 parser.add_argument('--keep_weights',default='True',type=str,
                     help='keep model weights after training? \
                     default: True.')
@@ -85,6 +81,35 @@ if not args.seed==None:
     np.random.seed(args.seed)
 if not args.gpu_number==None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
+
+#load genotype matrices
+def load_genotypes():
+    if args.zarr is not None:
+        print("reading zarr")
+        callset = zarr.open_group(args.zarr, mode='r')
+        gt = callset['calldata/GT']
+        genotypes = allel.GenotypeArray(gt[:])
+        samples = callset['samples'][:]
+    else:
+        print("reading VCF")
+        vcf=allel.read_vcf(args.vcf,log=sys.stderr)
+        genotypes=allel.GenotypeArray(vcf['calldata/GT'])
+        samples=vcf['samples']
+    return genotypes,samples
+
+#sort sample data
+def sort_samples(samples):
+    sample_data=pd.read_csv(args.sample_data,sep="\t") #to args.sample_data
+    sample_data['sampleID2']=sample_data['sampleID']
+    sample_data.set_index('sampleID',inplace=True)
+    sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
+    if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
+        print("sample ordering failed! Check that sample IDs match the VCF.")
+        sys.exit()
+    locs=np.array(sample_data[["longitude","latitude"]])
+    print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
+    return(sample_data,locs)
+
 
 #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes,impute):
@@ -105,45 +130,20 @@ def replace_md(genotypes,impute):
        ac[missingness]=-1
     return ac
 
-#load genotype matrices
-def load_genotypes():
-    if args.zarr is not None:
-        print("reading zarr")
-        callset = zarr.open_group(args.zarr, mode='r')
-        gt = callset['calldata/GT']
-        genotypes = allel.GenotypeArray(gt[:])
-        samples = callset['samples'][:]
-    else:
-        print("reading VCF")
-        vcf=allel.read_vcf(args.vcf,log=sys.stderr)
-        genotypes=allel.GenotypeArray(vcf['calldata/GT'])
-        samples=vcf['samples']
-    return genotypes,samples
-
-#sort sample data
-def sort_samples(samples):
-    sample_data=pd.read_csv(args.sample_data,sep="\t")
-    sample_data['sampleID2']=sample_data['sampleID']
-    sample_data.set_index('sampleID',inplace=True)
-    sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
-    if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
-        print("sample ordering failed! Check that sample IDs match the VCF.")
-        sys.exit()
-    locs=np.array(sample_data[["longitude","latitude"]])
-    print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
-    return(sample_data,locs)
-
 #SNP filters
 def filter_snps(genotypes):
-    if not args.min_mac==None:
+    if not args.min_mac==1:
+        print("dropping low-frequency sites")
         derived_counts=genotypes.count_alleles()[:,1]
-        ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
+        ac_filter=[x >= args.min_mac for x in derived_counts] 
         genotypes=genotypes[ac_filter,:,:]
     if args.impute_missing in ['TRUE','true','True',"T","t",True]:
         ac=replace_md(genotypes,impute=True)
     else:
+        print("converting to allele counts")
         ac=genotypes.to_allele_counts()[:,:,1]
     if not args.max_SNPs==None:
+        print("subsetting SNPs")
         ac=ac[np.random.choice(range(ac.shape[0]),args.max_SNPs,replace=False),:]
     print("running on "+str(len(ac))+" genotypes after filtering\n\n\n")
     return ac
@@ -174,7 +174,7 @@ def split_train_test(ac,locs):
         predgen=np.transpose(ac[:,pred])
     elif args.mode=="cv": #cross-validation mode
         if 'test' in sample_data.keys():
-            train=np.argwhere(sample_data['test']==False)
+            train=np.argwhere(sample_data['test']!=True)
             test=np.argwhere(sample_data['test']==True)
             train=np.array([x[0] for x in train])
             test=np.array([x[0] for x in test])
@@ -286,7 +286,6 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
         predout.to_csv(args.out+"_predlocs.txt",index=False)
         testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
 
-    #print correlation coefficient for longitude
     if args.mode=="cv":
         r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
         r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
@@ -308,16 +307,11 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
                +"mean error "+str(mean_dist)+"\n"
                +"median error "+str(median_dist)+"\n")
     hist=pd.DataFrame(history.history)
-    hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps
-    x = np.arange(1000)
-    gp.plot((np.array(dists),
-             dict(histogram = 'freq',binwidth=np.std(dists)/5)),
-            unset='grid',
-            terminal='dumb 60 20',
-            title='Test Error')
+    hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps?
     keras.backend.clear_session()
+    return(dists)
 
-def plot_history(history):
+def plot_history(history,dists):
     if args.plot_history:
         plt.switch_backend('agg')
         fig = plt.figure(figsize=(4,1.5),dpi=200)
@@ -333,11 +327,18 @@ def plot_history(history):
         #ax2.set_yscale("log")
 
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
+        #sys.tracebacklimit = 0 #gp.plot throws an error when printing to stdout from command line
         gp.plot(np.array(history.history['val_loss'][3:]),
                 unset='grid',
                 terminal='dumb 60 20',
                 #set= 'logscale y',
                 title='Validation Loss by Epoch')
+        gp.plot((np.array(dists),
+                 dict(histogram = 'freq',binwidth=np.std(dists)/5)),
+                unset='grid',
+                terminal='dumb 60 20',
+                title='Test Error')
+
 
 #######################################################################
 dropout_prop=args.dropout_prop
@@ -352,13 +353,21 @@ if args.boot in ['False','FALSE','F','false','f']:
     model=load_network(traingen,dropout_prop)
     start=time.time()
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-    predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
-    plot_history(history)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+    plot_history(history,dists)
     if args.keep_weights in ['False','F','FALSE','f','false']:
         subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
     end=time.time()
     elapsed=end-start
     print("run time "+str(elapsed/60)+" minutes")
+    ##extra output logging for tests
+    row=[args.zarr,args.max_SNPs,args.nlayers,args.width,args.patience,args.batch_size,elapsed,np.mean(dists),np.median(dists)]
+    row=row+dists
+    row=[str(x) for x in row]
+    row=" ".join(row)+'\n'
+    out=open("/home/cbattey2/locator/locator_summary_sigma045_2.txt","a")
+    out.write(row)
+    out.close()
 elif args.boot in ['True','TRUE','T','true','t']:
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
@@ -372,8 +381,8 @@ elif args.boot in ['True','TRUE','T','true','t']:
         model=load_network(traingen,dropout_prop)
         start=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-        predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
-        plot_history(history)
+        dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+        plot_history(history,dists)
         if args.keep_weights in ['False','F','FALSE','f','false']:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
