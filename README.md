@@ -1,26 +1,20 @@
-# Locator
+# *Locator*
 
-Locator is a supervised machine learning method for predicting geographic location from
+*Locator* is a supervised machine learning method for predicting geographic location from
 genotype or sequencing data. 
 
 # Installation 
 
-Locator requires python3m, gnuplot, and the following packages:
+*Locator* requires python3m, gnuplot, and the following packages:
 ```
 allel, zarr, numpy, pandas, tensorflow, keras, scipy 
 ```
 
-Gnuplot (http://www.gnuplot.info/) can be installed easily with conda: 
+Gnuplot (http://www.gnuplot.info/) can be installed easily with your favorite package manager, e.g. 
 ```
-conda install -c bioconda gnuplot
-```
-homebrew (for macs)
-```
-brew install gnuplot
-```
-or with something like this on Linux
-```
-sudo apt-get install gnuplot
+conda install -c bioconda gnuplot #for conda users
+brew install gnuplot #mac 
+sudo apt-get install gnuplot #linux
 ```
 
 To install the python dependencies, download the repository and run the setup script: 
@@ -31,7 +25,7 @@ python setup.py install
 ```
  
 For large datasets or bootstrap uncertainty estimation we strongly recommend you 
-run Locator on a CUDA-enabled GPU (Installation 
+run *Locator* on a CUDA-enabled GPU (Installation 
 instructions can be found at https://www.tensorflow.org/install/gpu).
 
 # Examples
