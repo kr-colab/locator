@@ -77,7 +77,8 @@ parser.add_argument("--gpu_number",default=None,type=str)
 parser.add_argument("--n_predictions",default=1,type=int,
                     help="if >1, number of predictions to generate \
                           for uncertainty estimation via droupout. \
-                          default: 1")
+                          default: 1. Note  (this output is not supported by\
+                          plot_locator.R).")
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
@@ -248,7 +249,7 @@ def load_callbacks(boot):
                                             patience=args.patience)
     reducelr=keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
                                                factor=0.5,
-                                               patience=int(args.patience/10),
+                                               patience=int(args.patience/6),
                                                verbose=1,
                                                mode='auto',
                                                min_delta=0,
