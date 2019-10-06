@@ -3,17 +3,22 @@ require(data.table);require(scales);require(raster)
 require(sp);require(MASS);require(rgeos);require(plyr)
 require(progress);require(argparse);require(ggplot2)
 
-parser <- argparse::ArgumentParser()
-parser$add_argument('--infile')
-parser$add_argument('--sample_data')
-parser$add_argument('--out')
-parser$add_argument('--width',default=5,type="double")
-parser$add_argument('--height',default=4,type="double")
-parser$add_argument('--samples',default=NULL)
-parser$add_argument('--nsamples',default=3)
-parser$add_argument('--ncol',default=3,type="integer")
-parser$add_argument('--error',default="F")
-parser$add_argument('--legend_position',default="bottom")
+parser <- argparse::ArgumentParser(description="Plot summary of a set of locator predictions")
+parser$add_argument('--infile',help="path to folder with .predlocs files")
+parser$add_argument('--sample_data',help="path to sample_data file")
+parser$add_argument('--out',help="path to output (will be appended with _typeofplot.pdf)")
+parser$add_argument('--width',default=5,type="double",help="width in inches of the output map")
+parser$add_argument('--height',default=4,type="double",help="height in inches of the output map")
+parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by comms.\
+                                                                    e.g. 'sample1,sample2,sample3'. No spaces.")
+parser$add_argument('--nsamples',default=3,help="if no --samples argument is provided, --nsamples\
+                                                 random samples will be plotted")
+parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots \
+                                                            (should evenly divide --nsamples)")
+parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known\
+                                                locations for all samples. T / F")
+parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if\
+                                                               --error is True. Options:'bottom','right'")
 args <- parser$parse_args()
 
 infile <- args$infile
