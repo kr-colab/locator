@@ -1,24 +1,27 @@
 #estimating sample locations from genotype matrices
-import allel, re, os, keras, matplotlib, sys, zarr, time, subprocess
-import numpy as np, pandas as pd, tensorflow as tf
-from scipy import spatial
-from tqdm import tqdm
-from matplotlib import pyplot as plt
-import argparse
-import gnuplotlib as gp
+import warnings
+with warnings.catch_warnings():
+    warnings.filterwarnings("ignore",category=DeprecationWarning)
+    import allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
+    import numpy as np, pandas as pd, tensorflow as tf
+    from scipy import spatial
+    from tqdm import tqdm
+    from matplotlib import pyplot as plt
+    import argparse
+    import gnuplotlib as gp
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
 parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
-                         'sampleID \t longitude \t latitude'.\
+                         'sampleID \t x \t y'.\
                           SampleIDs must exactly match those in the \
-                          training VCF. Longitude and latitude for \
+                          VCF. X and Y values for \
                           samples without known locations should \
                           be NA. If a column named 'test' \
                           is included, samples with test==True will be \
-                          used as the test set (currently cv mode only).")
+                          used as the test set.")
 parser.add_argument("--mode",default="cv",
                     help="'cv' splits the sample by train_split \
                           and predicts on the test set. \
@@ -29,10 +32,16 @@ parser.add_argument("--mode",default="cv",
 parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
-parser.add_argument("--boot",default="False",type=str,
-                    help="Run bootstrap replicates?\
-                    default: False.")
-parser.add_argument("--nboots",default=50,type=int,
+parser.add_argument("--bootstrap",default="False",type=str,
+                    help="Run bootstrap replicates by retraining on bootstrapped data. True/False.\
+                    default: False")
+parser.add_argument("--jacknife",default="False",type=str,
+                    help="Run jacknife uncertainty estimate on a trained network. \
+                    NOTE: we recommend this only as a fast heuristic -- use the bootstrap \
+                    option or run windowed analyses for final results.")
+parser.add_argument("--jacknife_prop",default=0.05,type=float,
+                    help="proportion of SNPs to remove for jacknife resampling")
+parser.add_argument("--nboots",default=100,type=int,
                     help="number of bootstrap replicates to run.\
                     default: 50")
 parser.add_argument("--batch_size",default=32,type=int,
@@ -41,7 +50,7 @@ parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
 parser.add_argument("--patience",type=int,default=100,
                     help="n epochs to run the optimizer after last \
-                          improved val_loss before stopping the run. \
+                          improvement in test loss before stopping. \
                           default: 100")
 parser.add_argument("--min_mac",default=2,type=int,
                     help="minimum minor allele count.\
@@ -75,8 +84,8 @@ parser.add_argument('--plot_history',default=True,type=bool,
 parser.add_argument('--keep_weights',default='True',type=str,
                     help='keep model weights after training? \
                     default: True.')
-parser.add_argument('--predict_from_weights',default='False',type=str,
-                    help='load model weights and predict on all samples')
+#parser.add_argument('--predict_from_weights',default='False',type=str,
+#                    help='load model weights and predict on all samples')
 args=parser.parse_args()
 
 if not args.seed==None:
@@ -197,10 +206,8 @@ def load_network(traingen,dropout_prop):
     from keras.layers.core import Lambda
     from keras import backend as K
     import keras
-
     def euclidean_distance_loss(y_true, y_pred):
         return K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
-
     model = Sequential()
     model.add(layers.BatchNormalization(input_shape=(traingen.shape[1],)))
     for i in range(int(np.floor(args.nlayers/2))):
@@ -220,7 +227,7 @@ def load_network(traingen,dropout_prop):
 
 #fit model and choose best weights
 def load_callbacks(boot):
-    if args.boot in ['True','true','TRUE','t','T']:
+    if args.bootstrap in ['True','true','TRUE','t','T'] or args.jacknife in ['True','true','TRUE','t','T']:
         checkpointer=keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_boot"+str(boot)+"_weights.hdf5",
                       verbose=1,
@@ -241,7 +248,7 @@ def load_callbacks(boot):
                                             patience=args.patience)
     reducelr=keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
                                                factor=0.5,
-                                               patience=int(args.patience/4),
+                                               patience=int(args.patience/10),
                                                verbose=1,
                                                mode='auto',
                                                min_delta=0,
@@ -257,16 +264,17 @@ def train_network(model,traingen,testgen,trainlocs,testlocs):
                         verbose=1,
                         validation_data=(testgen,testlocs),
                         callbacks=[checkpointer,earlystop,reducelr])
-    if args.boot in ['True','true','TRUE','T','t']:
+    if args.bootstrap in ['True','true','TRUE','T','t'] or args.jacknife in ['True','true','TRUE','T','t']:
         model.load_weights(args.out+"_boot"+str(boot)+"_weights.hdf5")
     else:
         model.load_weights(args.out+"_weights.hdf5")
     return history,model
 
 #predict and plot
-def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
+def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,verbose=True):
     import keras
-    print("predicting locations...")
+    if verbose==True:
+        print("predicting locations...")
     for i in tqdm(range(args.n_predictions)):
         prediction=model.predict(predgen)
         prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
@@ -279,37 +287,38 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs):
     predout['sampleID']=[x for y in s2 for x in y]
     s3=[np.repeat(x,prediction.shape[0]) for x in range(args.n_predictions)]
     predout['prediction']=[x for y in s3 for x in y]
-    if args.boot in ['TRUE','True','true','T','t']:
+    if args.bootstrap in ['TRUE','True','true','T','t'] or args.jacknife in ['TRUE','True','true','T','t']:
         predout.to_csv(args.out+"_boot"+str(boot)+"_predlocs.txt",index=False)
-        testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
+        testlocs2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
     else:
         predout.to_csv(args.out+"_predlocs.txt",index=False)
-        testlocs=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
-
+        testlocs2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
     #print correlation coefficient for longitude
     if args.mode=="cv":
-        r2_long=np.corrcoef(prediction[:,0],testlocs[:,0])[0][1]**2
-        r2_lat=np.corrcoef(prediction[:,1],testlocs[:,1])[0][1]**2
-        mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-        median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))])
-        dists=[spatial.distance.euclidean(prediction[x,:],testlocs[x,:]) for x in range(len(prediction))]
-        print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
-               +"mean error "+str(mean_dist)+"\n"
-               +"median error "+str(median_dist)+"\n")
+        r2_long=np.corrcoef(prediction[:,0],testlocs2[:,0])[0][1]**2
+        r2_lat=np.corrcoef(prediction[:,1],testlocs2[:,1])[0][1]**2
+        mean_dist=np.mean([spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))])
+        median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))])
+        dists=[spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))]
+        if verbose==True:
+            print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+                   +"mean error "+str(mean_dist)+"\n"
+                   +"median error "+str(median_dist)+"\n")
     elif args.mode=="predict":
-        p2=model.predict(test_x)
+        p2=model.predict(testgen)
         p2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in p2])
-        r2_long=np.corrcoef(p2[:,0],testlocs[:,0])[0][1]**2
-        r2_lat=np.corrcoef(p2[:,1],testlocs[:,1])[0][1]**2
-        mean_dist=np.mean([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
-        median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))])
-        dists=[spatial.distance.euclidean(p2[x,:],testlocs[x,:]) for x in range(len(p2))]
-        print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
-               +"mean error "+str(mean_dist)+"\n"
-               +"median error "+str(median_dist)+"\n")
+        r2_long=np.corrcoef(p2[:,0],testlocs2[:,0])[0][1]**2
+        r2_lat=np.corrcoef(p2[:,1],testlocs2[:,1])[0][1]**2
+        mean_dist=np.mean([spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))])
+        median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))])
+        dists=[spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))]
+        if verbose==True:
+            print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+                   +"mean error "+str(mean_dist)+"\n"
+                   +"median error "+str(median_dist)+"\n")
     hist=pd.DataFrame(history.history)
     hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps?
-    keras.backend.clear_session()
+    #keras.backend.clear_session()
     return(dists)
 
 def plot_history(history,dists):
@@ -321,12 +330,12 @@ def plot_history(history,dists):
         ax1.plot(history.history['val_loss'][3:],"-",color="black",lw=0.5)
         ax1.set_xlabel("Validation Loss")
         #ax1.set_yscale("log")
-
+        #
         ax2=fig.add_axes([0.55,0,0.4,1])
         ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
         ax2.set_xlabel("Training Loss")
         #ax2.set_yscale("log")
-
+        #
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
         #sys.tracebacklimit = 0 #gp.plot throws an error when printing to stdout from command line
         gp.plot(np.array(history.history['val_loss'][3:]),
@@ -342,46 +351,93 @@ def plot_history(history,dists):
 
 #######################################################################
 dropout_prop=args.dropout_prop
-if args.boot in ['False','FALSE','F','false','f']:
+if args.bootstrap in ['False','FALSE','F','false','f'] and args.jacknife in ['False','FALSE','F','false','f']:
     boot=None
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
     meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
     ac=filter_snps(genotypes)
-    checkpointer,earlystop,reducelr=load_callbacks(boot)
+    checkpointer,earlystop,reducelr=load_callbacks("FULL")
     train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
-    model=load_network(traingen,dropout_prop)
+    model=load_network(traingen,args.dropout_prop)
     start=time.time()
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
     plot_history(history,dists)
     if args.keep_weights in ['False','F','FALSE','f','false']:
         subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
     end=time.time()
     elapsed=end-start
     print("run time "+str(elapsed/60)+" minutes")
-elif args.boot in ['True','TRUE','T','true','t']:
+elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['False','FALSE','F','false','f']:
+    boot="FULL"
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
     meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
     ac=filter_snps(genotypes)
+    checkpointer,earlystop,reducelr=load_callbacks("FULL")
+    train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+    model=load_network(traingen,args.dropout_prop)
+    start=time.time()
+    history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
+    plot_history(history,dists)
+    if args.keep_weights in ['False','F','FALSE','f','false']:
+        subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
+    end=time.time()
+    elapsed=end-start
+    print("run time "+str(elapsed/60)+" minutes")
     for boot in range(args.nboots):
         checkpointer,earlystop,reducelr=load_callbacks(boot)
         print("starting bootstrap "+str(boot))
-        ac_boot=ac[np.random.choice(ac.shape[0],ac.shape[0],replace=True),:]
-        train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac_boot,locs)
-        model=load_network(traingen,dropout_prop)
+        traingen2=copy.deepcopy(traingen)
+        testgen2=copy.deepcopy(testgen)
+        predgen2=copy.deepcopy(predgen)
+        site_order=np.random.choice(traingen2.shape[1],traingen2.shape[1],replace=True)
+        traingen2=traingen2[:,site_order]
+        testgen2=testgen2[:,site_order]
+        predgen2=predgen2[:,site_order]
+        model=load_network(traingen2,args.dropout_prop)
         start=time.time()
-        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-        dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs)
+        history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs)
+        dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
         plot_history(history,dists)
         if args.keep_weights in ['False','F','FALSE','f','false']:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
         elapsed=end-start
         print("run time "+str(elapsed/60)+" minutes\n\n")
-
-
+elif args.jacknife in ['True','TRUE','T','true','t']:
+    boot="FULL"
+    genotypes,samples=load_genotypes()
+    sample_data,locs=sort_samples(samples)
+    meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
+    ac=filter_snps(genotypes)
+    checkpointer,earlystop,reducelr=load_callbacks(boot)
+    train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+    model=load_network(traingen,args.dropout_prop)
+    start=time.time()
+    history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
+    plot_history(history,dists)
+    end=time.time()
+    elapsed=end-start
+    print("run time "+str(elapsed/60)+" minutes")
+    print("starting jacknife resampling")
+    af=[]
+    for i in tqdm(range(ac.shape[0])):
+        af.append(sum(ac[i,:])/(ac.shape[1]*2))
+    af=np.array(af)
+    for boot in tqdm(range(args.nboots)):
+        checkpointer,earlystop,reducelr=load_callbacks(boot)
+        pg=copy.deepcopy(predgen) #this asshole
+        sites_to_remove=np.random.choice(pg.shape[1],int(pg.shape[1]*args.jacknife_prop),replace=False) #treat X% of sites as missing data
+        for i in sites_to_remove:
+            pg[:,i]=np.random.binomial(2,af[i],pg.shape[0])
+            pg[:,i]=af[i]
+        dists=predict_locs(model,pg,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,verbose=False)
+    if args.keep_weights in ['False','F','FALSE','f','false']:
+        subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
 
 #
 # #debugging params
@@ -390,19 +446,22 @@ elif args.boot in ['True','TRUE','T','true','t']:
 #                         train_split=0.8,
 #                         zarr=None,
 #                         boot=False,
+#                         nboots=100,
 #                         nlayers=10,
+#                         jacknife="True",
 #                         width=256,
 #                         batch_size=128,
 #                         max_epochs=5000,
-#                         patience=200,
+#                         patience=20,
 #                         impute_missing=True,
-#                         max_SNPs=100,
+#                         max_SNPs=1000,
 #                         min_mac=2,
 #                         out="anopheles_2L_1e6-2.5e6",
 #                         model="dense",
 #                         outdir="/Users/cj/locator/out/",
 #                         mode="cv",
+#                         plot_history='True',
 #                         locality_split=True,
 #                         dropout_prop=0.5,
 #                         gpu_number="0",
-#                         n_predictions=100)
+#                         n_predictions=1)
