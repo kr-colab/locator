@@ -1,19 +1,27 @@
 #plot output for one individual from a Locator run
-require(data.table);require(scales);require(raster)
-require(sp);require(MASS);require(rgeos);require(plyr)
-require(progress);require(argparse);require(ggplot2)
+suppressMessages(suppressWarnings(require(data.table)))
+suppressMessages(suppressWarnings(require(scales)))
+suppressMessages(suppressWarnings(require(raster)))
+suppressMessages(suppressWarnings(require(sp)))
+suppressMessages(suppressWarnings(require(MASS)))
+suppressMessages(suppressWarnings(require(rgeos)))
+suppressMessages(suppressWarnings(require(plyr)))
+suppressMessages(suppressWarnings(require(progress)))
+suppressMessages(suppressWarnings(require(argparse)))
+suppressMessages(suppressWarnings(require(ggplot2)))
 
 parser <- argparse::ArgumentParser(description="Plot summary of a set of locator predictions")
 parser$add_argument('--infile',help="path to folder with .predlocs files")
-parser$add_argument('--sample_data',help="path to sample_data file")
+parser$add_argument('--sample_data',help="path to sample_data file (should be WGS1984 longitude / latitude if map=TRUE.")
 parser$add_argument('--out',help="path to output (will be appended with _typeofplot.pdf)")
-parser$add_argument('--width',default=5,type="double",help="width in inches of the output map")
-parser$add_argument('--height',default=4,type="double",help="height in inches of the output map")
-parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by commas. e.g. sample1,sample2,sample3. No spaces.")
-parser$add_argument('--nsamples',default=3,help="if no --samples argument is provided, --nsamples random samples will be plotted")
-parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots (should evenly divide --nsamples)")
-parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F")
-parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'")
+parser$add_argument('--width',default=5,type="double",help="width in inches of the output map. default = 5")
+parser$add_argument('--height',default=4,type="double",help="height in inches of the output map. default = 4")
+parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by commas. e.g. sample1,sample2,sample3. No spaces. default = NULL")
+parser$add_argument('--nsamples',default=9,help="if no --samples argument is provided, --nsamples random samples will be plotted. default = 9")
+parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots (should evenly divide --nsamples). default = 3")
+parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F. default = F")
+parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'. default = bottom")
+parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -124,12 +132,22 @@ if(length(samples)==2){
 }
 for(i in samples){
   sample <- subset(pd,sampleID==i)
-  plot(map,axes=T,cex.axis=0.5,tck=-0.03,
-       xlim=c(min(na.omit(c(sample$xpred,sample$longitude)))-6,
-              max(na.omit(c(sample$xpred,sample$longitude)))+6),
-       ylim=c(min(na.omit(c(sample$ypred,sample$latitude)))-6,
-              max(na.omit(c(sample$ypred,sample$latitude)))+6),
-       col="grey",border="white",lwd=0.35)
+  if(args$map=="T"){
+    plot(map,axes=T,cex.axis=0.5,tck=-0.03,
+         xlim=c(min(na.omit(c(sample$xpred,sample$longitude)))-6,
+                max(na.omit(c(sample$xpred,sample$longitude)))+6),
+         ylim=c(min(na.omit(c(sample$ypred,sample$latitude)))-6,
+                max(na.omit(c(sample$ypred,sample$latitude)))+6),
+         col="grey",border="white",lwd=0.35)
+  } else {
+    plot(0,axes=T,cex.axis=0.5,tck=-0.03,
+         xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-1,
+                max(na.omit(c(pd$xpred,pd$longitude)))+1),
+         ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-1,
+                max(na.omit(c(pd$ypred,pd$latitude)))+1),
+         col="white",border="white")
+  }
+  
   title(sample$sampleID[1],cex.main=0.75,font.main=1)
   box(lwd=1)
   pts <- SpatialPoints(as.matrix(data.frame(sample$xpred,sample$ypred)))
@@ -149,16 +167,16 @@ for(i in samples){
     })
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
-  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=16,cex=0.5,lwd=0.2)
+  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=1,cex=0.5,lwd=0.4)
   points(pts,pch=16,cex=0.45,col=alpha("black",0.7))
   try({
     contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
             labcex=0.3,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
   },silent=TRUE)
   points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=1,cex=.8)
-  if(!is.null(grep("FULL",files))){
-    points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
-  }
+  # if(!is.null(grep("FULL",files))){
+  #   points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
+  # }
   #pb$tick()
 }
 plot(1, type = "n", axes=FALSE, xlab="", ylab="")
@@ -168,42 +186,43 @@ legend(x="top",
        pch=16,cex=.7,pt.cex=2.25,bty='n',horiz=T)
 dev.off()
 
-
-truelocs <- ddply(pd,.(longitude,latitude),summarize,error=mean(dist_gc))
-locsn <- ddply(locs,.(longitude,latitude),summarize,n=length(sampleID))
-truelocs <- merge(truelocs,locsn,c("longitude","latitude"))
-
-pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
-map <- crop(map,c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                  max(na.omit(c(pd$xpred,pd$longitude)))+10,
-                  min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                  max(na.omit(c(pd$ypred,pd$latitude)))+10))
-ggplot()+coord_map(projection = "mollweide",
-                   xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                          max(na.omit(c(pd$xpred,pd$longitude)))+10),
-                   ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                          max(na.omit(c(pd$ypred,pd$latitude)))+10))+
-  theme_classic()+theme(axis.title = element_blank(),
-                        legend.title = element_text(size=8),
-                        legend.text=element_text(size=6),
-                        axis.text=element_text(size=6),
-                       # legend.box = "horizontal",
-                        legend.position = args$legend_position)+
-  scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
-  scale_size_continuous(name="Training\nSamples")+
-  geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
-  geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
-  geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
-  geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1)
-dev.off()
+if(error != "F"){
+  truelocs <- ddply(pd,.(longitude,latitude),summarize,error=mean(dist_gc))
+  locsn <- ddply(locs,.(longitude,latitude),summarize,n=length(sampleID))
+  truelocs <- merge(truelocs,locsn,c("longitude","latitude"))
   
-#pd$dist <- apply(pd[,2:5],1,function(e) spDistsN1(matrix(e[1:2],ncol=2),matrix(e[3:4],ncol=2),longlat = TRUE))
-pdf(paste0(out,"_error_histogram.pdf"),width=3,height=2.5)
-ggplot(data=pd,aes(x=dist_gc))+
-  theme_classic()+theme(axis.text=element_text(size=6),axis.title=element_text(size=8))+
-  xlab("Test Error (km)")+ylab("n samples")+
-  #scale_x_log10()+
-  geom_histogram()
-dev.off()
+  pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
+  map <- crop(map,c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
+                    max(na.omit(c(pd$xpred,pd$longitude)))+10,
+                    min(na.omit(c(pd$ypred,pd$latitude)))-10,
+                    max(na.omit(c(pd$ypred,pd$latitude)))+10))
+  ggplot()+coord_map(projection = "mollweide",
+                     xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
+                            max(na.omit(c(pd$xpred,pd$longitude)))+10),
+                     ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-10,
+                            max(na.omit(c(pd$ypred,pd$latitude)))+10))+
+    theme_classic()+theme(axis.title = element_blank(),
+                          legend.title = element_text(size=8),
+                          legend.text=element_text(size=6),
+                          axis.text=element_text(size=6),
+                          # legend.box = "horizontal",
+                          legend.position = args$legend_position)+
+    scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+    scale_size_continuous(name="Training\nSamples")+
+    geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+    geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
+    geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
+    geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1)
+  dev.off()
   
+  #pd$dist <- apply(pd[,2:5],1,function(e) spDistsN1(matrix(e[1:2],ncol=2),matrix(e[3:4],ncol=2),longlat = TRUE))
+  pdf(paste0(out,"_error_histogram.pdf"),width=3,height=2.5)
+  ggplot(data=pd,aes(x=dist_gc))+
+    theme_classic()+theme(axis.text=element_text(size=6),axis.title=element_text(size=8))+
+    xlab("Test Error (km)")+ylab("n samples")+
+    #scale_x_log10()+
+    geom_histogram()
+  dev.off()
+}
+
   
