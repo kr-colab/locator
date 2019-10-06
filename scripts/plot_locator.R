@@ -9,16 +9,11 @@ parser$add_argument('--sample_data',help="path to sample_data file")
 parser$add_argument('--out',help="path to output (will be appended with _typeofplot.pdf)")
 parser$add_argument('--width',default=5,type="double",help="width in inches of the output map")
 parser$add_argument('--height',default=4,type="double",help="height in inches of the output map")
-parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by comms.\
-                                                                    e.g. 'sample1,sample2,sample3'. No spaces.")
-parser$add_argument('--nsamples',default=3,help="if no --samples argument is provided, --nsamples\
-                                                 random samples will be plotted")
-parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots \
-                                                            (should evenly divide --nsamples)")
-parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known\
-                                                locations for all samples. T / F")
-parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if\
-                                                               --error is True. Options:'bottom','right'")
+parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by commas. e.g. sample1,sample2,sample3. No spaces.")
+parser$add_argument('--nsamples',default=3,help="if no --samples argument is provided, --nsamples random samples will be plotted")
+parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots (should evenly divide --nsamples)")
+parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F")
+parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -57,6 +52,7 @@ print("loading data")
 if(grepl("predlocs.txt",infile)){
   pd <- fread(infile,data.table=F)
   names(pd) <- c('xpred','ypred','sampleID','prediction')
+  files <- infile
 } else {
   files <- list.files(infile,full.names = T)
   files <- grep("predlocs",files,value=T)
@@ -160,7 +156,9 @@ for(i in samples){
             labcex=0.3,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
   },silent=TRUE)
   points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=1,cex=.8)
-  points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
+  if(!is.null(grep("FULL",files))){
+    points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
+  }
   #pb$tick()
 }
 plot(1, type = "n", axes=FALSE, xlab="", ylab="")
