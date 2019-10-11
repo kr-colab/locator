@@ -94,7 +94,7 @@ locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.
 ```
 
 # Plotting
-We include an R script to plot output from Locator. Install the required packages by running 
+plot_locator.R is a command line script that plots maps of locator output. Install the required packages by running 
 ```Rscript scripts/install_R_packages.R```
 
 Cross-validation results and predicted locations can be plotted with 
@@ -102,8 +102,7 @@ Cross-validation results and predicted locations can be plotted with
 Rscript scripts/plot_locator.R --infile out/jacknife --sample_data data/test_sample_data.txt --out out/jacknife/test --map F
 
 ```
-This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` For lat/long coordinates
-you can also calculate and plot error estimates by using the `--error` option. See all parameters with 
+This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` For lat/long coordinates you can also calculate and plot error estimates by using the `--error` option. See all parameters with 
 ```
 Rscript scripts/plot_locator.R --help
 ```
