@@ -50,7 +50,7 @@ parser.add_argument("--max_epochs",default=5000,type=int,
                     help="default: 5000")
 parser.add_argument("--patience",type=int,default=100,
                     help="n epochs to run the optimizer after last \
-                          improvement in test loss before stopping. \
+                          improvement in test loss. \
                           default: 100")
 parser.add_argument("--min_mac",default=2,type=int,
                     help="minimum minor allele count.\
@@ -61,8 +61,8 @@ parser.add_argument("--max_SNPs",default=None,type=int,
 parser.add_argument("--impute_missing",default="True",type=str,
                     help='default: True (if False, all alleles at missing sites are ancestral)')
 parser.add_argument("--dropout_prop",default=0.25,type=float,
-                    help="proportion of weights to drop at the dropout layer. \
-                          default: 0.25")
+                     help="proportion of weights to drop at the dropout layer. \
+                           default: 0.25")
 parser.add_argument("--nlayers",default=10,type=int,
                     help="if model=='dense', number of fully-connected \
                     layers in the network. \
@@ -74,11 +74,6 @@ parser.add_argument("--out",help="file name stem for output")
 parser.add_argument("--seed",default=None,type=int,
                     help="random seed used for train/test splits and max_SNPs.")
 parser.add_argument("--gpu_number",default=None,type=str)
-parser.add_argument("--n_predictions",default=1,type=int,
-                    help="if >1, number of predictions to generate \
-                          for uncertainty estimation via droupout. \
-                          default: 1. Note  (this output is not supported by\
-                          plot_locator.R).")
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
@@ -168,6 +163,9 @@ def normalize_locs(locs):
     return meanlong,sdlong,meanlat,sdlat,locs
 
 def split_train_test(ac,locs):
+    if np.any(np.isnan(locs[:,0])):
+        if args.mode == "cv":
+            print("NA in coordinates. Use --mode predict")
     #split training, testing, and prediction sets
     if args.mode=="predict": #TODO: add manual test splits to pred mode
         train=np.argwhere(~np.isnan(locs[:,0]))
@@ -213,11 +211,7 @@ def load_network(traingen,dropout_prop):
     model.add(layers.BatchNormalization(input_shape=(traingen.shape[1],)))
     for i in range(int(np.floor(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
-    if args.dropout_prop > 0:
-        if args.n_predictions > 1:
-            model.add(Lambda(lambda x: K.dropout(x, level=args.dropout_prop)))
-        else:
-            model.add(layers.Dropout(args.dropout_prop))
+    model.add(layers.Dropout(args.dropout_prop))
     for i in range(int(np.ceil(args.nlayers/2))):
         model.add(layers.Dense(args.width,activation="elu"))
     model.add(layers.Dense(2))
@@ -276,7 +270,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
     import keras
     if verbose==True:
         print("predicting locations...")
-    for i in tqdm(range(args.n_predictions)):
+    for i in tqdm(range(1)):
         prediction=model.predict(predgen)
         prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
         if i==0:
@@ -284,9 +278,9 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         else:
             predictions=np.concatenate((predictions,prediction),axis=0)
     predout=pd.DataFrame(predictions)
-    s2=[samples[pred] for x in range(args.n_predictions)]
+    s2=[samples[pred] for x in range(1)]
     predout['sampleID']=[x for y in s2 for x in y]
-    s3=[np.repeat(x,prediction.shape[0]) for x in range(args.n_predictions)]
+    s3=[np.repeat(x,prediction.shape[0]) for x in range(1)]
     predout['prediction']=[x for y in s3 for x in y]
     if args.bootstrap in ['TRUE','True','true','T','t'] or args.jacknife in ['TRUE','True','true','T','t']:
         predout.to_csv(args.out+"_boot"+str(boot)+"_predlocs.txt",index=False)
