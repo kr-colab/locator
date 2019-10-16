@@ -42,7 +42,7 @@ test_history.txt -- training history
 test_weights.hdf5 -- model weights   
 test_fitplot.pdf -- plot of training history   
 
-See all parameters with `python scripts/locator_dev.py --h`
+See all parameters with `python scripts/locator.py --h`
 
 # Uncertainty
 For whole genome or dense SNP data, we recommend running locator in windows across the genome. 
