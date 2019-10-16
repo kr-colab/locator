@@ -72,12 +72,12 @@ parser.add_argument("--width",default=256,type=int,
                     default:256")
 parser.add_argument("--out",help="file name stem for output")
 parser.add_argument("--seed",default=None,type=int,
-                    help="random seed used for train/test splits and max_SNPs.")
+                    help="random seed for train/test splits and SNP subsetting.")
 parser.add_argument("--gpu_number",default=None,type=str)
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
-parser.add_argument('--keep_weights',default='True',type=str,
+parser.add_argument('--keep_weights',default='False',type=str,
                     help='keep model weights after training? \
                     default: True.')
 #parser.add_argument('--predict_from_weights',default='False',type=str,
@@ -113,7 +113,7 @@ def sort_samples(samples):
     if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
         print("sample ordering failed! Check that sample IDs match the VCF.")
         sys.exit()
-    locs=np.array(sample_data[["longitude","latitude"]])
+    locs=np.array(sample_data[["x","y"]])
     print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
     return(sample_data,locs)
 
@@ -296,7 +296,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))])
         dists=[spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))]
         if verbose==True:
-            print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+            print("R2(x)="+str(r2_long)+"\nR2(y)="+str(r2_lat)+"\n"
                    +"mean error "+str(mean_dist)+"\n"
                    +"median error "+str(median_dist)+"\n")
     elif args.mode=="predict":
@@ -308,7 +308,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         median_dist=np.median([spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))])
         dists=[spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))]
         if verbose==True:
-            print("R2(longitude)="+str(r2_long)+"\nR2(latitude)="+str(r2_lat)+"\n"
+            print("R2(x)="+str(r2_long)+"\nR2(y)="+str(r2_lat)+"\n"
                    +"mean error "+str(mean_dist)+"\n"
                    +"median error "+str(median_dist)+"\n")
     hist=pd.DataFrame(history.history)
@@ -383,6 +383,7 @@ elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['Fal
     elapsed=end-start
     print("run time "+str(elapsed/60)+" minutes")
     for boot in range(args.nboots):
+        np.random.seed(np.random.choice(range(int(1e6)),1))
         checkpointer,earlystop,reducelr=load_callbacks(boot)
         print("starting bootstrap "+str(boot))
         traingen2=copy.deepcopy(traingen)

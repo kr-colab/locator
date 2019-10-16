@@ -12,7 +12,7 @@ suppressMessages(suppressWarnings(require(ggplot2)))
 
 parser <- argparse::ArgumentParser(description="Plot summary of a set of locator predictions.")
 parser$add_argument('--infile',help="path to folder with .predlocs files")
-parser$add_argument('--sample_data',help="path to sample_data file (should be WGS1984 longitude / latitude if map=TRUE.")
+parser$add_argument('--sample_data',help="path to sample_data file (should be WGS1984 x / y if map=TRUE.")
 parser$add_argument('--out',help="path to output (will be appended with _typeofplot.pdf)")
 parser$add_argument('--width',default=5,type="double",help="width in inches of the output map. default = 5")
 parser$add_argument('--height',default=4,type="double",help="height in inches of the output map. default = 4")
@@ -22,7 +22,7 @@ parser$add_argument('--ncol',default=3,type="integer",help="number of columns fo
 parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F. default = F")
 parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'. default = bottom")
 parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
-parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are longitude and latitude in decimal degrees for error in kilometers. default: FALSE. ")
+parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are x and y in decimal degrees for error in kilometers. default: FALSE. ")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -108,7 +108,7 @@ if(error!="F"){
   })
   pd <- merge(pd,bp,by="sampleID")
   plocs=as.matrix(pd[,c("kd_x","kd_y")])
-  tlocs=as.matrix(pd[,c("longitude","latitude")])
+  tlocs=as.matrix(pd[,c("x","y")])
   dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
                                                    t(as.matrix(tlocs[e,])),longlat = args$longlat))
   pd$dist_kd <- dists
@@ -117,7 +117,7 @@ if(error!="F"){
   print(paste("90% CI for kernal peak error = ",quantile(dists,0.05),quantile(dists,0.95)))
   
   plocs=as.matrix(pd[,c("gc_x","gc_y")])
-  tlocs=as.matrix(pd[,c("longitude","latitude")])
+  tlocs=as.matrix(pd[,c("x","y")])
   dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
                                                    t(as.matrix(tlocs[e,])),longlat = args$longlat))
   pd$dist_gc <- dists
@@ -147,17 +147,17 @@ for(i in samples){
   sample <- pd[pd$sampleID==i,]
   if(usemap=="T"){
     plot(map,axes=T,cex.axis=0.5,tck=-0.03,
-         xlim=c(min(na.omit(c(sample$xpred,sample$longitude)))-6,
-                max(na.omit(c(sample$xpred,sample$longitude)))+6),
-         ylim=c(min(na.omit(c(sample$ypred,sample$latitude)))-6,
-                max(na.omit(c(sample$ypred,sample$latitude)))+6),
+         xlim=c(min(na.omit(c(sample$xpred,sample$x)))-6,
+                max(na.omit(c(sample$xpred,sample$x)))+6),
+         ylim=c(min(na.omit(c(sample$ypred,sample$y)))-6,
+                max(na.omit(c(sample$ypred,sample$y)))+6),
          col="grey",lwd=0.35)
   } else {
     plot(0,axes=T,cex.axis=0.5,tck=-0.03,
-         xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-1,
-                max(na.omit(c(pd$xpred,pd$longitude)))+1),
-         ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-1,
-                max(na.omit(c(pd$ypred,pd$latitude)))+1),
+         xlim=c(min(na.omit(c(pd$xpred,pd$x)))-1,
+                max(na.omit(c(pd$xpred,pd$x)))+1),
+         ylim=c(min(na.omit(c(pd$ypred,pd$y)))-1,
+                max(na.omit(c(pd$ypred,pd$y)))+1),
          col="white")
   }
   
@@ -167,10 +167,10 @@ for(i in samples){
   pts <- SpatialPoints(as.matrix(data.frame(sample$xpred,sample$ypred)))
   try({
     kd <- kde2d(sample$xpred,sample$ypred,n = 80,
-                lims = c(min(na.omit(c(sample$xpred,sample$longitude)))-15,
-                         max(na.omit(c(sample$xpred,sample$longitude)))+15,
-                         min(na.omit(c(sample$ypred,sample$latitude))-15),
-                         max(na.omit(c(sample$ypred,sample$latitude)))+15))
+                lims = c(min(na.omit(c(sample$xpred,sample$x)))-15,
+                         max(na.omit(c(sample$xpred,sample$x)))+15,
+                         min(na.omit(c(sample$ypred,sample$y))-15),
+                         max(na.omit(c(sample$ypred,sample$y)))+15))
     prob <- c(.95,.5,.1) #via https://stackoverflow.com/questions/16225530/contours-of-percentiles-on-level-plot
     dx <- diff(kd$x[1:2])
     dy <- diff(kd$y[1:2])
@@ -181,13 +181,13 @@ for(i in samples){
     })
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
-  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=16,cex=0.5,lwd=0.5)
+  points(x=locs$x,y=locs$y,col="dodgerblue3",pch=16,cex=0.5,lwd=0.5)
   points(pts,pch=16,cex=0.35,col=alpha("black",0.7))
   try({
     contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
             labcex=0.32,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
   },silent=TRUE)
-  points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=16,cex=.8)
+  points(x=sample$x[1],y=sample$y[1],col="red3",pch=16,cex=.8)
   # if(!is.null(grep("FULL",files))){
   #   points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
   # }
@@ -202,21 +202,21 @@ dev.off()
 
 
 if(error != "F"){
-  truelocs <- ddply(pd,.(longitude,latitude),summarize,error=mean(dist_gc))
-  locsn <- ddply(locs,.(longitude,latitude),summarize,n=length(sampleID))
-  truelocs <- merge(truelocs,locsn,c("longitude","latitude"))
+  truelocs <- ddply(pd,.(x,y),summarize,error=mean(dist_gc))
+  locsn <- ddply(locs,.(x,y),summarize,n=length(sampleID))
+  truelocs <- merge(truelocs,locsn,c("x","y"))
   
   pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
   if(usemap=="T"){
-    map <- crop(map,c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                      max(na.omit(c(pd$xpred,pd$longitude)))+10,
-                      min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                      max(na.omit(c(pd$ypred,pd$latitude)))+10))
+    map <- crop(map,c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                      max(na.omit(c(pd$xpred,pd$x)))+10,
+                      min(na.omit(c(pd$ypred,pd$y)))-10,
+                      max(na.omit(c(pd$ypred,pd$y)))+10))
     print(ggplot()+coord_map(projection = "mollweide",
-                             xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                                    max(na.omit(c(pd$xpred,pd$longitude)))+10),
-                             ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                                    max(na.omit(c(pd$ypred,pd$latitude)))+10))+
+                             xlim=c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                                    max(na.omit(c(pd$xpred,pd$x)))+10),
+                             ylim=c(min(na.omit(c(pd$ypred,pd$y)))-10,
+                                    max(na.omit(c(pd$ypred,pd$y)))+10))+
             theme_classic()+theme(axis.title = element_blank(),
                                   legend.title = element_text(size=8),
                                   legend.text=element_text(size=6),
@@ -226,8 +226,8 @@ if(error != "F"){
             scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
             scale_size_continuous(name="Training\nSamples")+
             geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
-            geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
-            geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
+            geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
+            geom_segment(data=pd,aes(x=x,y=y,xend=gc_x,yend=gc_y),lwd=0.2)+
             geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
   } else {
     print(ggplot()+
@@ -240,8 +240,8 @@ if(error != "F"){
             scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
             scale_size_continuous(name="Training\nSamples")+
             #geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
-            geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
-            geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
+            geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
+            geom_segment(data=pd,aes(x=x,y=y,xend=gc_x,yend=gc_y),lwd=0.2)+
             geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
   }
  
