@@ -27,7 +27,7 @@ For large datasets or bootstrap uncertainty estimation we recommend
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts location for a set of samples. By default `--mode` is set to `cv`, which assumes all locations are known and runs a cross-validation analysis to estimate how well the model can generalize outside the training set. To predict locations for new samples, switch `--mode` to `--predict`. 
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts location for a set of samples. By default `--mode` is set to `cv`, which assumes all locations are known and runs a cross-validation analysis to estimate how well the model can generalize outside the training set. To predict locations for new samples, use `--mode predict`. 
 
 # Inputs
 Genotypes can read read from .vcf, vcf.gz, or zarr files.  
