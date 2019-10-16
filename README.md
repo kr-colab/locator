@@ -26,6 +26,20 @@ python setup.py install
 For large datasets or bootstrap uncertainty estimation we recommend 
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
+# Overview
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts location for a set of samples. By default `--mode` is set to `cv`, which assumes all locations are known and runs a cross-validation analysis to estimate how well the model can generalize outside the training set. To predict locations for new samples, switch `--mode` to `--predict`. 
+
+# Inputs
+Genotypes can read read from .vcf, vcf.gz, or zarr files.  
+
+Sample metadata should be a tab-delimited file with the first row:  
+
+`sampleID	x	y`
+
+Use NA or NaN for samples with unknown locations. Metadata must include all samples in the genotypes file. 
+If a column named 'test' is included, samples with test==True will be used as the test set. 
+
+
 # Examples
 
 This command should fit a model to a simulated test dataset of 
