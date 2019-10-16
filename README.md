@@ -37,7 +37,7 @@ locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.
 
 It will produce 4 files: 
 
-test_predlocs.txt -- predicted locations
+test_predlocs.txt -- predicted locations  
 test_history.txt -- training history  
 test_weights.hdf5 -- model weights   
 test_fitplot.pdf -- plot of training history   
