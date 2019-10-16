@@ -10,7 +10,7 @@ suppressMessages(suppressWarnings(require(progress)))
 suppressMessages(suppressWarnings(require(argparse)))
 suppressMessages(suppressWarnings(require(ggplot2)))
 
-parser <- argparse::ArgumentParser(description="Plot summary of a set of locator predictions")
+parser <- argparse::ArgumentParser(description="Plot summary of a set of locator predictions.")
 parser$add_argument('--infile',help="path to folder with .predlocs files")
 parser$add_argument('--sample_data',help="path to sample_data file (should be WGS1984 longitude / latitude if map=TRUE.")
 parser$add_argument('--out',help="path to output (will be appended with _typeofplot.pdf)")
@@ -22,6 +22,7 @@ parser$add_argument('--ncol',default=3,type="integer",help="number of columns fo
 parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F. default = F")
 parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'. default = bottom")
 parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
+parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are longitude and latitude in decimal degrees for error in kilometers. default: FALSE. ")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -32,14 +33,20 @@ height <- args$height
 ncol <- args$ncol
 dropout <- args$dropout
 error <- args$error
-# indir <- "~/locator/out/ag1000g/windows"
-# sample_data <- "~/locator/data/ag1000g/anopheles_samples_sp.txt"
-# out <- "~/Desktop/testmap"
+samples <- args$samples
+usemap <- args$map
+
+# indir <- "~/locator/out/hgdp/windows_10mbp_test3/"
+# sample_data <- "~/locator/data/hgdp/hgdp_sample_data.txt"
+# out <- "~/locator/fig/hgdp/hgdp"
 # width <- 5
 # height <- 4
-# samples <- c("AN0007-C","AN0014-C","AB0190-C","AB0211-C","AB0206-C","AJ0088-C")
-# infile <- "~/Desktop/droptest_predlocs.txt"
-# AN0007-C,AN0014-C,AB0190-C,AB0211-C,AB0206-C,AJ0088-C
+# samples <- NULL
+# infile <- "~/locator/out/hgdp/windows_10mbp_test3/"
+# ncol <- 4
+# usemap <- T
+# haploid <- T
+# 
 
 
 kdepred <- function(xcoords,ycoords){
@@ -72,9 +79,8 @@ if(grepl("predlocs.txt",infile)){
   names(pd) <- c('xpred','ypred','sampleID')
 }
 
-
-if(!is.null(args$samples) && grepl(",",args$samples)){
-  samples <- unlist(strsplit(args$samples,","))
+if(!is.null(samples) && grepl(",",samples)){
+  samples <- unlist(strsplit(samples,","))
 } else if(is.null(args$samples)){
   samples <- sample(unique(pd$sampleID),args$nsamples,replace = F)
 } else {
@@ -82,6 +88,12 @@ if(!is.null(args$samples) && grepl(",",args$samples)){
 }
 
 locs <- fread(sample_data,data.table=F)
+# if(haploid==T){
+#   locs$sampleID <- paste(locs$sampleID,"_h0")
+#   locs2 <- locs
+#   locs2$sampleID <- paste(locs2$sampleID,"_h1")
+#   locs <- rbind(locs,locs2)
+# }
 pd <- merge(pd,locs,by="sampleID")
 
 if(error!="F"){
@@ -98,7 +110,7 @@ if(error!="F"){
   plocs=as.matrix(pd[,c("kd_x","kd_y")])
   tlocs=as.matrix(pd[,c("longitude","latitude")])
   dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
-                                                   t(as.matrix(tlocs[e,])),longlat = T))
+                                                   t(as.matrix(tlocs[e,])),longlat = args$longlat))
   pd$dist_kd <- dists
   print(paste("mean kernel peak error =",mean(dists)))
   print(paste("median kernel peak error =",median(dists)))
@@ -107,22 +119,22 @@ if(error!="F"){
   plocs=as.matrix(pd[,c("gc_x","gc_y")])
   tlocs=as.matrix(pd[,c("longitude","latitude")])
   dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
-                                                   t(as.matrix(tlocs[e,])),longlat = T))
+                                                   t(as.matrix(tlocs[e,])),longlat = args$longlat))
   pd$dist_gc <- dists
   print(paste("mean centroid error =",mean(dists)))
   print(paste("median centroid error ",median(dists)))
   print(paste("90% CI for centroid error = ",quantile(dists,0.05),quantile(dists,0.95)))
-  
 }
 
 
-
 load("~/locator/data/cntrymap.Rdata")
-
 print("plotting")
 pb <- progress_bar$new(total=length(samples))
-png(paste0(out,"_windows.png"),width=width,height=height,res = 600,units = "in")
+png(paste0(out,"_windows.png"),width=width,height=height,res = 400,units = "in")
 par(oma=c(0,0,0,0),mai=c(.15,.15,.15,.15),mgp=c(3,0.15,0))
+if(length(samples)==1){
+  layout(mat=matrix(c(1,2),byrow=T,nrow=2),heights = c(1,.5))
+}
 if(length(samples)==2){
   layout(mat=matrix(c(1,2,3,3),byrow=T,nrow=2),heights = c(1,.5))
 } else if(length(samples)>=3){
@@ -131,24 +143,26 @@ if(length(samples)==2){
          heights = c(rep(1,ceiling(length(samples)/ncol)),.5))
 }
 for(i in samples){
-  sample <- subset(pd,sampleID==i)
-  if(args$map=="T"){
+  print(i)
+  sample <- pd[pd$sampleID==i,]
+  if(usemap=="T"){
     plot(map,axes=T,cex.axis=0.5,tck=-0.03,
          xlim=c(min(na.omit(c(sample$xpred,sample$longitude)))-6,
                 max(na.omit(c(sample$xpred,sample$longitude)))+6),
          ylim=c(min(na.omit(c(sample$ypred,sample$latitude)))-6,
                 max(na.omit(c(sample$ypred,sample$latitude)))+6),
-         col="grey",border="white",lwd=0.35)
+         col="grey",lwd=0.35)
   } else {
     plot(0,axes=T,cex.axis=0.5,tck=-0.03,
          xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-1,
                 max(na.omit(c(pd$xpred,pd$longitude)))+1),
          ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-1,
                 max(na.omit(c(pd$ypred,pd$latitude)))+1),
-         col="white",border="white")
+         col="white")
   }
   
-  title(sample$sampleID[1],cex.main=0.75,font.main=1)
+  #title(paste(sample$population[1],sample$sampleID[1],sep=":"),cex.main=0.9,font.main=1)
+  title(sample$sampleID[1],cex.main=0.9,font.main=1)
   box(lwd=1)
   pts <- SpatialPoints(as.matrix(data.frame(sample$xpred,sample$ypred)))
   try({
@@ -167,13 +181,13 @@ for(i in samples){
     })
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
-  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=1,cex=0.5,lwd=0.4)
-  points(pts,pch=16,cex=0.45,col=alpha("black",0.7))
+  points(x=locs$longitude,y=locs$latitude,col="dodgerblue3",pch=16,cex=0.5,lwd=0.5)
+  points(pts,pch=16,cex=0.35,col=alpha("black",0.7))
   try({
     contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
-            labcex=0.3,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
+            labcex=0.32,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
   },silent=TRUE)
-  points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=1,cex=.8)
+  points(x=sample$longitude[1],y=sample$latitude[1],col="red3",pch=16,cex=.8)
   # if(!is.null(grep("FULL",files))){
   #   points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
   # }
@@ -183,8 +197,9 @@ plot(1, type = "n", axes=FALSE, xlab="", ylab="")
 legend(x="top",
        legend=c("Training Locations","Sample Location","Predicted Locations"),
        col=c("dodgerblue3","red3","black"),
-       pch=16,cex=.7,pt.cex=2.25,bty='n',horiz=T)
+       pch=16,cex=1,pt.cex=2,bty='n',horiz=T,x.intersp = 1)
 dev.off()
+
 
 if(error != "F"){
   truelocs <- ddply(pd,.(longitude,latitude),summarize,error=mean(dist_gc))
@@ -192,36 +207,53 @@ if(error != "F"){
   truelocs <- merge(truelocs,locsn,c("longitude","latitude"))
   
   pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
-  map <- crop(map,c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                    max(na.omit(c(pd$xpred,pd$longitude)))+10,
-                    min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                    max(na.omit(c(pd$ypred,pd$latitude)))+10))
-  ggplot()+coord_map(projection = "mollweide",
-                     xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
-                            max(na.omit(c(pd$xpred,pd$longitude)))+10),
-                     ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-10,
-                            max(na.omit(c(pd$ypred,pd$latitude)))+10))+
-    theme_classic()+theme(axis.title = element_blank(),
-                          legend.title = element_text(size=8),
-                          legend.text=element_text(size=6),
-                          axis.text=element_text(size=6),
-                          # legend.box = "horizontal",
-                          legend.position = args$legend_position)+
-    scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
-    scale_size_continuous(name="Training\nSamples")+
-    geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
-    geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
-    geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
-    geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1)
+  if(usemap=="T"){
+    map <- crop(map,c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
+                      max(na.omit(c(pd$xpred,pd$longitude)))+10,
+                      min(na.omit(c(pd$ypred,pd$latitude)))-10,
+                      max(na.omit(c(pd$ypred,pd$latitude)))+10))
+    print(ggplot()+coord_map(projection = "mollweide",
+                             xlim=c(min(na.omit(c(pd$xpred,pd$longitude)))-10,
+                                    max(na.omit(c(pd$xpred,pd$longitude)))+10),
+                             ylim=c(min(na.omit(c(pd$ypred,pd$latitude)))-10,
+                                    max(na.omit(c(pd$ypred,pd$latitude)))+10))+
+            theme_classic()+theme(axis.title = element_blank(),
+                                  legend.title = element_text(size=8),
+                                  legend.text=element_text(size=6),
+                                  axis.text=element_text(size=6),
+                                  # legend.box = "horizontal",
+                                  legend.position = args$legend_position)+
+            scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+            scale_size_continuous(name="Training\nSamples")+
+            geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+            geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
+            geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
+            geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
+  } else {
+    print(ggplot()+
+            theme_classic()+theme(axis.title = element_blank(),
+                                  legend.title = element_text(size=8),
+                                  legend.text=element_text(size=6),
+                                  axis.text=element_text(size=6),
+                                  # legend.box = "horizontal",
+                                  legend.position = args$legend_position)+
+            scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+            scale_size_continuous(name="Training\nSamples")+
+            #geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+            geom_point(data=truelocs,aes(x=longitude,y=latitude,color=error,size=n))+
+            geom_segment(data=pd,aes(x=longitude,y=latitude,xend=gc_x,yend=gc_y),lwd=0.2)+
+            geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
+  }
+ 
   dev.off()
   
   #pd$dist <- apply(pd[,2:5],1,function(e) spDistsN1(matrix(e[1:2],ncol=2),matrix(e[3:4],ncol=2),longlat = TRUE))
   pdf(paste0(out,"_error_histogram.pdf"),width=3,height=2.5)
-  ggplot(data=pd,aes(x=dist_gc))+
+  print(ggplot(data=pd,aes(x=dist_gc))+
     theme_classic()+theme(axis.text=element_text(size=6),axis.title=element_text(size=8))+
     xlab("Test Error (km)")+ylab("n samples")+
     #scale_x_log10()+
-    geom_histogram()
+    geom_histogram())
   dev.off()
 }
 
