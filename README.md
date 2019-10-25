@@ -1,5 +1,7 @@
 `Locator` is a supervised machine learning method for predicting geographic location from
-genotype or sequencing data. 
+genotype or sequencing data.   
+
+This package is in active development and probably has some bugs. Please post an issue or pull request when you find them!
 
 # Installation 
 
