@@ -9,10 +9,19 @@ with warnings.catch_warnings():
     from matplotlib import pyplot as plt
     import argparse
     import gnuplotlib as gp
+    import json
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
 parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
+# parser.add_argument('--genotype_matrix',help="path to tab-delimited file containing genotypes. \ #working on this
+#                                               One row per individual, with each entry \
+#                                               giving the number of derived alleles at \
+#                                               each site (0/1/2). No header or row names. \
+#                                               Sample IDs should be linked with the \
+#                                               --sample_ids option.")
+# parser.add_argument('--sample_ids',help="path to file with sample IDs. One ID per row, \
+#                                          with order matching the --genotype_matrix file.")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
                          'sampleID \t x \t y'.\
@@ -77,17 +86,42 @@ parser.add_argument("--gpu_number",default=None,type=str)
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
+parser.add_argument('--gnuplot',default=False,action="store_true",
+                    help="print acii plot of training history to stdout? \
+                    default: False")
 parser.add_argument('--keep_weights',default='False',type=str,
                     help='keep model weights after training? \
-                    default: True.')
-#parser.add_argument('--predict_from_weights',default='False',type=str,
-#                    help='load model weights and predict on all samples')
+                    default: False.')
+parser.add_argument('--load_params',default=None,type=str,
+                    help='Path to a _params.json file to load parameters from a previous run.\
+                          Parameters from the json file will supersede all parameters provided via command line.')
+# parser.add_argument('--predict_from_weights',default=None,type=str,
+#                    help='output string for parameters and model weights files to load \
+#                          (i.e. the --out parameter used for the previous run).\
+#                          If this parameter is used, filtering parameters and \
+#                          model weights will be loaded from a presvious training \
+#                          run and used to predict locations for all samples. Example:\
+#                          if a model has been trained and weights and stored as \
+#                          "test_weights.hdf5", use --predict_from_weights test')
 args=parser.parse_args()
 
-if not args.seed==None:
+#set seed and gpu
+if args.seed is not None:
     np.random.seed(args.seed)
-if not args.gpu_number==None:
+if args.gpu_number is not None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
+
+#load old run parameters
+if args.load_params is not None:
+    #vcf=args.vcf;zarr=args.zarr;out=args.out
+    with open(args.predict_from_weights+"_params", 'r') as f:
+        args.__dict__ = json.load(f)
+    #args.vcf=vcf;args.zarr=zarr;args.out=out
+    f.close()
+
+with open(args.out+'_params.json', 'w') as f:
+    json.dump(args.__dict__, f, indent=2)
+f.close()
 
 #load genotype matrices
 def load_genotypes():
@@ -97,11 +131,14 @@ def load_genotypes():
         gt = callset['calldata/GT']
         genotypes = allel.GenotypeArray(gt[:])
         samples = callset['samples'][:]
-    else:
+    elif args.vcf is not None:
         print("reading VCF")
         vcf=allel.read_vcf(args.vcf,log=sys.stderr)
         genotypes=allel.GenotypeArray(vcf['calldata/GT'])
         samples=vcf['samples']
+    # elif args.genotype_matrix is not None:
+    #     genotypes=np.loadtxt(args.genotype_matrix)
+    #     samples=np.loadtxt(args.sample_ids)
     return genotypes,samples
 
 #sort sample data
@@ -120,21 +157,16 @@ def sort_samples(samples):
 
 #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes,impute):
-    if impute in [True,"TRUE","True","T","true"]:
-        print("imputing missing data")
-        dc=genotypes.count_alleles()[:,1]
-        ac=genotypes.to_allele_counts()[:,:,1]
-        missingness=genotypes.is_missing()
-        ninds=np.array([np.sum(x) for x in ~missingness])
-        af=np.array([dc[x]/(2*ninds[x]) for x in range(len(ninds))])
-        for i in tqdm(range(np.shape(ac)[0])):
-            for j in range(np.shape(ac)[1]):
-                if(missingness[i,j]):
-                    ac[i,j]=np.random.binomial(2,af[i])
-    else:
-       missingness=genotypes.is_missing()
-       ac=genotypes.to_allele_counts()[:,:,1]
-       ac[missingness]=-1
+    print("imputing missing data")
+    dc=genotypes.count_alleles()[:,1]
+    ac=genotypes.to_allele_counts()[:,:,1]
+    missingness=genotypes.is_missing()
+    ninds=np.array([np.sum(x) for x in ~missingness])
+    af=np.array([dc[x]/(2*ninds[x]) for x in range(len(ninds))])
+    for i in tqdm(range(np.shape(ac)[0])):
+        for j in range(np.shape(ac)[1]):
+            if(missingness[i,j]):
+                ac[i,j]=np.random.binomial(2,af[i])
     return ac
 
 #SNP filters
@@ -145,7 +177,7 @@ def filter_snps(genotypes):
         ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
         genotypes=genotypes[ac_filter,:,:]
     if args.impute_missing in ['TRUE','true','True',"T","t",True]:
-        ac=replace_md(genotypes,impute=True)
+        ac=replace_md(genotypes)
     else:
         ac=genotypes.to_allele_counts()[:,:,1]
     if not args.max_SNPs==None:
@@ -266,29 +298,20 @@ def train_network(model,traingen,testgen,trainlocs,testlocs):
     return history,model
 
 #predict and plot
-def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,verbose=True):
+def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen,verbose=True):
     import keras
     if verbose==True:
         print("predicting locations...")
-    for i in tqdm(range(1)):
-        prediction=model.predict(predgen)
-        prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
-        if i==0:
-            predictions=prediction
-        else:
-            predictions=np.concatenate((predictions,prediction),axis=0)
-    predout=pd.DataFrame(predictions)
-    s2=[samples[pred] for x in range(1)]
-    predout['sampleID']=[x for y in s2 for x in y]
-    s3=[np.repeat(x,prediction.shape[0]) for x in range(1)]
-    predout['prediction']=[x for y in s3 for x in y]
+    prediction=model.predict(predgen)
+    prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
+    predout=pd.DataFrame(prediction)
+    predout['sampleID']=samples[pred]
     if args.bootstrap in ['TRUE','True','true','T','t'] or args.jacknife in ['TRUE','True','true','T','t']:
         predout.to_csv(args.out+"_boot"+str(boot)+"_predlocs.txt",index=False)
         testlocs2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
     else:
         predout.to_csv(args.out+"_predlocs.txt",index=False)
         testlocs2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
-    #print correlation coefficient for longitude
     if args.mode=="cv":
         r2_long=np.corrcoef(prediction[:,0],testlocs2[:,0])[0][1]**2
         r2_lat=np.corrcoef(prediction[:,1],testlocs2[:,1])[0][1]**2
@@ -297,10 +320,10 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         dists=[spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))]
         if verbose==True:
             print("R2(x)="+str(r2_long)+"\nR2(y)="+str(r2_lat)+"\n"
-                   +"mean error "+str(mean_dist)+"\n"
-                   +"median error "+str(median_dist)+"\n")
+                   +"mean validation error "+str(mean_dist)+"\n"
+                   +"median validation error "+str(median_dist)+"\n")
     elif args.mode=="predict":
-        p2=model.predict(testgen)
+        p2=model.predict(testgen) #print validation loss to screen
         p2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in p2])
         r2_long=np.corrcoef(p2[:,0],testlocs2[:,0])[0][1]**2
         r2_lat=np.corrcoef(p2[:,1],testlocs2[:,1])[0][1]**2
@@ -309,14 +332,15 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         dists=[spatial.distance.euclidean(p2[x,:],testlocs2[x,:]) for x in range(len(p2))]
         if verbose==True:
             print("R2(x)="+str(r2_long)+"\nR2(y)="+str(r2_lat)+"\n"
-                   +"mean error "+str(mean_dist)+"\n"
-                   +"median error "+str(median_dist)+"\n")
+                   +"mean validation error "+str(mean_dist)+"\n"
+                   +"median validation error "+str(median_dist)+"\n")
     hist=pd.DataFrame(history.history)
     hist.to_csv(args.out+"_history.txt",sep="\t",index=False) #TODO: add if/else for bootstraps?
+    vars(args)
     #keras.backend.clear_session()
     return(dists)
 
-def plot_history(history,dists):
+def plot_history(history,dists,gnuplot):
     if args.plot_history:
         plt.switch_backend('agg')
         fig = plt.figure(figsize=(4,1.5),dpi=200)
@@ -333,19 +357,19 @@ def plot_history(history,dists):
         #
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
         #sys.tracebacklimit = 0 #gp.plot throws an error when printing to stdout from command line
-        gp.plot(np.array(history.history['val_loss'][3:]),
-                unset='grid',
-                terminal='dumb 60 20',
-                #set= 'logscale y',
-                title='Validation Loss by Epoch')
-        gp.plot((np.array(dists),
-                 dict(histogram = 'freq',binwidth=np.std(dists)/5)),
-                unset='grid',
-                terminal='dumb 60 20',
-                title='Test Error')
+        if gnuplot:
+            gp.plot(np.array(history.history['val_loss'][3:]),
+                    unset='grid',
+                    terminal='dumb 60 20',
+                    #set= 'logscale y',
+                    title='Validation Loss by Epoch')
+            gp.plot((np.array(dists),
+                     dict(histogram = 'freq',binwidth=np.std(dists)/5)),
+                    unset='grid',
+                    terminal='dumb 60 20',
+                    title='Test Error')
 
 #######################################################################
-dropout_prop=args.dropout_prop
 if args.bootstrap in ['False','FALSE','F','false','f'] and args.jacknife in ['False','FALSE','F','false','f']:
     boot=None
     genotypes,samples=load_genotypes()
@@ -357,8 +381,8 @@ if args.bootstrap in ['False','FALSE','F','false','f'] and args.jacknife in ['Fa
     model=load_network(traingen,args.dropout_prop)
     start=time.time()
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
-    plot_history(history,dists)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
+    plot_history(history,dists,args.gnuplot)
     if args.keep_weights in ['False','F','FALSE','f','false']:
         subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
     end=time.time()
@@ -375,8 +399,8 @@ elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['Fal
     model=load_network(traingen,args.dropout_prop)
     start=time.time()
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
-    plot_history(history,dists)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
+    plot_history(history,dists,args.gnuplot)
     if args.keep_weights in ['False','F','FALSE','f','false']:
         subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
     end=time.time()
@@ -396,8 +420,8 @@ elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['Fal
         model=load_network(traingen2,args.dropout_prop)
         start=time.time()
         history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs)
-        dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
-        plot_history(history,dists)
+        dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen2)
+        plot_history(history,dists,args.gnuplot)
         if args.keep_weights in ['False','F','FALSE','f','false']:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
@@ -414,8 +438,8 @@ elif args.jacknife in ['True','TRUE','T','true','t']:
     model=load_network(traingen,args.dropout_prop)
     start=time.time()
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
-    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples)
-    plot_history(history,dists)
+    dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
+    plot_history(history,dists,args.gnuplot)
     end=time.time()
     elapsed=end-start
     print("run time "+str(elapsed/60)+" minutes")
@@ -430,31 +454,30 @@ elif args.jacknife in ['True','TRUE','T','true','t']:
         sites_to_remove=np.random.choice(pg.shape[1],int(pg.shape[1]*args.jacknife_prop),replace=False) #treat X% of sites as missing data
         for i in sites_to_remove:
             pg[:,i]=np.random.binomial(2,af[i],pg.shape[0])
-            pg[:,i]=af[i]
-        dists=predict_locs(model,pg,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,verbose=False)
+            #pg[:,i]=af[i]
+        dists=predict_locs(model,pg,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen,verbose=False) #TODO: check testgen behavior for printing R2 to screen with jacknife in predict mode
     if args.keep_weights in ['False','F','FALSE','f','false']:
         subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
 
 #
-# #debugging params
-# args=argparse.Namespace(vcf="/Users/cj/locator/data/ag1000g/ag1000g2L_1e6_to_2.5e6.vcf.gz",
-#                         sample_data="/Users/cj/locator/data/ag1000g/anopheles_samples_sp.txt",
-#                         train_split=0.8,
+#debugging params
+# args=argparse.Namespace(vcf="/Users/cj/locator/data/test_genotypes.vcf.gz",
+#                         sample_data="/Users/cj/locator/data/test_sample_data.txt",
+#                         train_split=0.9,
 #                         zarr=None,
 #                         boot=False,
 #                         nboots=100,
 #                         nlayers=10,
 #                         jacknife="True",
 #                         width=256,
-#                         batch_size=128,
+#                         batch_size=32,
 #                         max_epochs=5000,
 #                         patience=20,
 #                         impute_missing=True,
 #                         max_SNPs=1000,
 #                         min_mac=2,
-#                         out="anopheles_2L_1e6-2.5e6",
+#                         out="/Users/cj/locator/out/ag1000g/anopheles_2L_1e6-2.5e6",
 #                         model="dense",
-#                         outdir="/Users/cj/locator/out/",
 #                         mode="cv",
 #                         plot_history='True',
 #                         locality_split=True,

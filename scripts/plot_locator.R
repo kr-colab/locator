@@ -19,10 +19,11 @@ parser$add_argument('--height',default=4,type="double",help="height in inches of
 parser$add_argument('--samples',default=NULL,type="character",help="samples IDs to plot, separated by commas. e.g. sample1,sample2,sample3. No spaces. default = NULL")
 parser$add_argument('--nsamples',default=9,help="if no --samples argument is provided, --nsamples random samples will be plotted. default = 9")
 parser$add_argument('--ncol',default=3,type="integer",help="number of columns for multipanel plots (should evenly divide --nsamples). default = 3")
-parser$add_argument('--error',default="F",help="calculate error and plot summary? requires known locations for all samples. T / F. default = F")
+parser$add_argument('--error',default=FALSE,action="store_true",help="calculate error and plot summary? requires known locations for all samples. T / F. default = F")
 parser$add_argument('--legend_position',default="bottom",help="legend position for summary plots if --error is True. Options:'bottom','right'. default = bottom")
 parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
 parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are x and y in decimal degrees for error in kilometers. default: FALSE. ")
+parser$add_argument('--haploid',default=FALSE,action="store_true",help="set to TRUE if predictions are from locator_phased.py. Predictions will be plotted for each haploid chromosome separately. default: FALSE.")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -35,18 +36,20 @@ dropout <- args$dropout
 error <- args$error
 samples <- args$samples
 usemap <- args$map
+haploid <- args$haploid
+nsamples <- args$nsamples
 
-# indir <- "~/locator/out/hgdp/windows_10mbp_test3/"
-# sample_data <- "~/locator/data/hgdp/hgdp_sample_data.txt"
-# out <- "~/locator/fig/hgdp/hgdp"
+# infile <- "~/locator/out/ag1000g/windows_2mbp_predict/"
+# sample_data <- "~/locator/data/ag1000g/ag1000g_phase1_samples.txt"
+# out <- "~/Desktop/ag1000g_predict"
 # width <- 5
 # height <- 4
 # samples <- NULL
-# infile <- "~/locator/out/hgdp/windows_10mbp_test3/"
-# ncol <- 4
+# nsamples<- 9
+# ncol <- 3
 # usemap <- T
-# haploid <- T
-# 
+# haploid <- F
+
 
 
 kdepred <- function(xcoords,ycoords){
@@ -66,14 +69,14 @@ kdepred <- function(xcoords,ycoords){
 print("loading data")
 if(grepl("predlocs.txt",infile)){
   pd <- fread(infile,data.table=F)
-  names(pd) <- c('xpred','ypred','sampleID','prediction')
+  names(pd) <- c('xpred','ypred','sampleID')
   files <- infile
 } else {
   files <- list.files(infile,full.names = T)
   files <- grep("predlocs",files,value=T)
-  pd <- fread(files[1],data.table=F)[0,]
+  pd <- fread(files[1],data.table=F)[0,1:3]
   for(f in files){
-    a <- fread(f,data.table = F)#[-1,-1]
+    a <- fread(f,data.table = F,header=T)[,1:3]
     pd <- rbind(pd,a)
   }
   names(pd) <- c('xpred','ypred','sampleID')
@@ -81,19 +84,20 @@ if(grepl("predlocs.txt",infile)){
 
 if(!is.null(samples) && grepl(",",samples)){
   samples <- unlist(strsplit(samples,","))
-} else if(is.null(args$samples)){
-  samples <- sample(unique(pd$sampleID),args$nsamples,replace = F)
+} else if(is.null(samples)){
+  samples <- sample(unique(pd$sampleID),nsamples,replace = F)
 } else {
   samples <- args$samples
 }
 
 locs <- fread(sample_data,data.table=F)
-# if(haploid==T){
-#   locs$sampleID <- paste(locs$sampleID,"_h0")
-#   locs2 <- locs
-#   locs2$sampleID <- paste(locs2$sampleID,"_h1")
-#   locs <- rbind(locs,locs2)
-# }
+names(locs)[1:3] <- c("sampleID","x","y")
+if(haploid==T){
+  locs2 <- locs
+  locs$sampleID <- paste0(locs$sampleID,"_h0")
+  locs2$sampleID <- paste0(locs2$sampleID,"_h1")
+  locs <- rbind(locs,locs2)
+}
 pd <- merge(pd,locs,by="sampleID")
 
 if(error!="F"){
@@ -106,7 +110,12 @@ if(error!="F"){
     names(out) <- c("gc_x","gc_y","kd_x","kd_y")
     return(out)
   })
+  
   pd <- merge(pd,bp,by="sampleID")
+  outsum <- pd[,c("sampleID","kd_x","kd_y","gc_x","gc_y")]
+  outsum <- ddply(outsum,.(sampleID),function(e) e[1,])
+  write.table(outsum,paste0(out,"_centroids.txt"),sep="\t",row.names=FALSE)
+  
   plocs=as.matrix(pd[,c("kd_x","kd_y")])
   tlocs=as.matrix(pd[,c("x","y")])
   dists=sapply(1:nrow(plocs),function(e) spDistsN1(t(as.matrix(plocs[e,])),
@@ -130,7 +139,7 @@ if(error!="F"){
 load("~/locator/data/cntrymap.Rdata")
 print("plotting")
 pb <- progress_bar$new(total=length(samples))
-png(paste0(out,"_windows.png"),width=width,height=height,res = 400,units = "in")
+png(paste0(out,"_windows.png"),width=width,height=height,res = 600,units = "in")
 par(oma=c(0,0,0,0),mai=c(.15,.15,.15,.15),mgp=c(3,0.15,0))
 if(length(samples)==1){
   layout(mat=matrix(c(1,2),byrow=T,nrow=2),heights = c(1,.5))
@@ -162,7 +171,7 @@ for(i in samples){
   }
   
   #title(paste(sample$population[1],sample$sampleID[1],sep=":"),cex.main=0.9,font.main=1)
-  title(sample$sampleID[1],cex.main=0.9,font.main=1)
+  title(sample$sampleID[1],cex.main=0.8,font.main=1)
   box(lwd=1)
   pts <- SpatialPoints(as.matrix(data.frame(sample$xpred,sample$ypred)))
   try({
@@ -181,7 +190,7 @@ for(i in samples){
     })
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
-  points(x=locs$x,y=locs$y,col="dodgerblue3",pch=16,cex=0.5,lwd=0.5)
+  points(x=locs$x,y=locs$y,col="dodgerblue3",pch=1,cex=0.5,lwd=0.5)
   points(pts,pch=16,cex=0.35,col=alpha("black",0.7))
   try({
     contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
@@ -237,7 +246,7 @@ if(error != "F"){
                                   axis.text=element_text(size=6),
                                   # legend.box = "horizontal",
                                   legend.position = args$legend_position)+
-            scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+            scale_color_distiller(palette = "RdYlBu",name="Mean Error")+
             scale_size_continuous(name="Training\nSamples")+
             #geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
             geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
