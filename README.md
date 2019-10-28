@@ -1,5 +1,7 @@
 `Locator` is a supervised machine learning method for predicting geographic location from
-genotype or sequencing data. 
+genotype or sequencing data.   
+
+This package is in active development and probably has some bugs. Please post an issue or pull request when you find them!
 
 # Installation 
 
@@ -27,7 +29,7 @@ For large datasets or bootstrap uncertainty estimation we recommend
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts location for a set of samples. By default `--mode` is set to `cv`, which assumes all locations are known and runs a cross-validation analysis to estimate how well the model can generalize outside the training set. To predict locations for new samples, use `--mode predict`. 
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By default `--mode` is set to `cv`, which assumes all locations are known and runs a cross-validation analysis to estimate how well the model can generalize outside the training set. To predict locations for samples with unknown locations, use `--mode predict`. 
 
 # Inputs
 Genotypes can read read from .vcf, vcf.gz, or zarr files.  
@@ -104,7 +106,7 @@ locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.
 ```
 
 # Plotting
-plot_locator.R is a command line script that plots maps of locator output. Install the required packages by running 
+plot_locator.R is a command line script that plots maps of locator output, intended mostly for runs with multiple outputs (either windowed analyses, bootstraps, or jacknife replicates). Install the required packages by running 
 ```Rscript scripts/install_R_packages.R```
 
 Cross-validation results and predicted locations can be plotted with 
@@ -112,7 +114,7 @@ Cross-validation results and predicted locations can be plotted with
 Rscript scripts/plot_locator.R --infile out/jacknife --sample_data data/test_sample_data.txt --out out/jacknife/test --map F
 
 ```
-This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` For lat/long coordinates you can also calculate and plot error estimates by using the `--error` option. See all parameters with 
+This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` You can also calculate and plot validation error estimates by using the `--error` option. See all parameters with 
 ```
 Rscript scripts/plot_locator.R --help
 ```
