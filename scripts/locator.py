@@ -156,7 +156,7 @@ def sort_samples(samples):
 
 
 #replace missing sites with binomial(2,mean_allele_frequency)
-def replace_md(genotypes,impute):
+def replace_md(genotypes):
     print("imputing missing data")
     dc=genotypes.count_alleles()[:,1]
     ac=genotypes.to_allele_counts()[:,:,1]
