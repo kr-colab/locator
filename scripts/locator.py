@@ -172,6 +172,10 @@ def replace_md(genotypes):
 #SNP filters
 def filter_snps(genotypes):
     print("filtering SNPs")
+    #use only biallelic sites (should upgrade this for a later release)
+    tmp=genotypes.count_alleles()
+    biallel=tmp.is_biallelic()
+    genotypes=genotypes[biallel,:,:]
     if not args.min_mac==1:
         derived_counts=genotypes.count_alleles()[:,1]
         ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
@@ -461,26 +465,27 @@ elif args.jacknife in ['True','TRUE','T','true','t']:
 
 #
 #debugging params
-# args=argparse.Namespace(vcf="/Users/cj/locator/data/test_genotypes.vcf.gz",
-#                         sample_data="/Users/cj/locator/data/test_sample_data.txt",
-#                         train_split=0.9,
-#                         zarr=None,
-#                         boot=False,
-#                         nboots=100,
-#                         nlayers=10,
-#                         jacknife="True",
-#                         width=256,
-#                         batch_size=32,
-#                         max_epochs=5000,
-#                         patience=20,
-#                         impute_missing=True,
-#                         max_SNPs=1000,
-#                         min_mac=2,
-#                         out="/Users/cj/locator/out/ag1000g/anopheles_2L_1e6-2.5e6",
-#                         model="dense",
-#                         mode="cv",
-#                         plot_history='True',
-#                         locality_split=True,
-#                         dropout_prop=0.5,
-#                         gpu_number="0",
-#                         n_predictions=1)
+args=argparse.Namespace(vcf="/Users/cj/locator/data/ruhu/populations.snps.vcf",
+                        sample_data="/Users/cj/locator/data/ruhu/ruhu_sample_data_LAmasked.txt",
+                        train_split=0.9,
+                        seed=12345,
+                        zarr=None,
+                        boot=False,
+                        nboots=100,
+                        nlayers=10,
+                        jacknife="True",
+                        width=256,
+                        batch_size=32,
+                        max_epochs=5000,
+                        patience=20,
+                        impute_missing=True,
+                        max_SNPs=1000,
+                        min_mac=2,
+                        out="/Users/cj/locator/out/ruhu/LAruhu",
+                        model="dense",
+                        mode="predict",
+                        plot_history='True',
+                        locality_split=True,
+                        dropout_prop=0.25,
+                        gpu_number="0",
+                        n_predictions=1)
