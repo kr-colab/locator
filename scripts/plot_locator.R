@@ -24,6 +24,7 @@ parser$add_argument('--legend_position',default="bottom",help="legend position f
 parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
 parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are x and y in decimal degrees for error in kilometers. default: FALSE. ")
 parser$add_argument('--haploid',default=FALSE,action="store_true",help="set to TRUE if predictions are from locator_phased.py. Predictions will be plotted for each haploid chromosome separately. default: FALSE.")
+parser$add_argument('--centroid_method',default="gc",help="Method for summarizing window/bootstrap predictions. Options 'gc' (take the centroid of window predictions with rgeos::gCentroid() ) or 'kd' (take the location of maximum density after kernal density estimation with mass::kde( )). default: gc")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -38,6 +39,7 @@ samples <- args$samples
 usemap <- args$map
 haploid <- args$haploid
 nsamples <- args$nsamples
+centroid_method <- args$centroid_method
 
 # infile <- "~/locator/out/ag1000g/windows_2mbp_predict/"
 # sample_data <- "~/locator/data/ag1000g/ag1000g_phase1_samples.txt"
@@ -50,7 +52,7 @@ nsamples <- args$nsamples
 # usemap <- T
 # haploid <- F
 
-
+load("~/locator/data/cntrymap.Rdata")
 
 kdepred <- function(xcoords,ycoords){
   try({
@@ -82,14 +84,6 @@ if(grepl("predlocs.txt",infile)){
   names(pd) <- c('xpred','ypred','sampleID')
 }
 
-if(!is.null(samples) && grepl(",",samples)){
-  samples <- unlist(strsplit(samples,","))
-} else if(is.null(samples)){
-  samples <- sample(unique(pd$sampleID),nsamples,replace = F)
-} else {
-  samples <- args$samples
-}
-
 locs <- fread(sample_data,data.table=F)
 names(locs)[1:3] <- c("sampleID","x","y")
 if(haploid==T){
@@ -98,6 +92,19 @@ if(haploid==T){
   locs2$sampleID <- paste0(locs2$sampleID,"_h1")
   locs <- rbind(locs,locs2)
 }
+
+#extra filters for pf7k data (qc fail samples put in prediction set and dropped here)
+#locs <- subset(locs,population!="Lab" & qc==T)
+#pd <- subset(pd,sampleID %in% locs$sampleID)
+
+if(!is.null(samples) && grepl(",",samples)){
+  samples <- unlist(strsplit(samples,","))
+} else if(is.null(samples)){
+  samples <- sample(unique(pd$sampleID),nsamples,replace = F)
+} else {
+  samples <- args$samples
+}
+
 pd <- merge(pd,locs,by="sampleID")
 
 if(error!="F"){
@@ -105,7 +112,7 @@ if(error!="F"){
   #get error for centroids and max kernel density locations
   bp <- ddply(pd,.(sampleID),function(e) {
     k <- kdepred(e$xpred,e$ypred)
-    g <- as.data.frame(gCentroid(SpatialPoints(as.matrix(e[,c("xpred","ypred")]))))
+    g <- as.data.frame(gCentroid(SpatialPoints(as.matrix(e[,c("xpred","ypred")]),proj4string = crs(proj4string(map)))))
     out <- unlist(c(g,k))
     names(out) <- c("gc_x","gc_y","kd_x","kd_y")
     return(out)
@@ -136,7 +143,6 @@ if(error!="F"){
 }
 
 
-load("~/locator/data/cntrymap.Rdata")
 print("plotting")
 pb <- progress_bar$new(total=length(samples))
 png(paste0(out,"_windows.png"),width=width,height=height,res = 600,units = "in")
@@ -155,7 +161,7 @@ for(i in samples){
   print(i)
   sample <- pd[pd$sampleID==i,]
   if(usemap=="T"){
-    plot(map,axes=T,cex.axis=0.5,tck=-0.03,
+    plot(map,axes=T,cex.axis=0.5,tck=-0.03,border="white",
          xlim=c(min(na.omit(c(sample$xpred,sample$x)))-6,
                 max(na.omit(c(sample$xpred,sample$x)))+6),
          ylim=c(min(na.omit(c(sample$ypred,sample$y)))-6,
@@ -191,12 +197,12 @@ for(i in samples){
     levels <- levels[!is.na(levels)]
   },silent=TRUE)
   points(x=locs$x,y=locs$y,col="dodgerblue3",pch=1,cex=0.5,lwd=0.5)
-  points(pts,pch=16,cex=0.35,col=alpha("black",0.7))
+  points(pts,pch=16,cex=0.4,col=alpha("black",0.7))
   try({
     contour(kd,levels=levels,drawlabels=T,labels=prob,add=T,
             labcex=0.32,lwd=0.5,axes=True,vfont=c("sans serif","bold"))
   },silent=TRUE)
-  points(x=sample$x[1],y=sample$y[1],col="red3",pch=16,cex=.8)
+  points(x=sample$x[1],y=sample$y[1],col="red3",pch=1,cex=.75)
   # if(!is.null(grep("FULL",files))){
   #   points(pts[grepl("FULL",files)],col="forestgreen",pch=1,cex=.8)
   # }
@@ -211,33 +217,59 @@ dev.off()
 
 
 if(error != "F"){
-  truelocs <- ddply(pd,.(x,y),summarize,error=mean(dist_gc))
-  locsn <- ddply(locs,.(x,y),summarize,n=length(sampleID))
-  truelocs <- merge(truelocs,locsn,c("x","y"))
-  
   pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
   if(usemap=="T"){
-    map <- crop(map,c(min(na.omit(c(pd$xpred,pd$x)))-10,
-                      max(na.omit(c(pd$xpred,pd$x)))+10,
-                      min(na.omit(c(pd$ypred,pd$y)))-10,
-                      max(na.omit(c(pd$ypred,pd$y)))+10))
-    print(ggplot()+coord_map(projection = "mollweide",
-                             xlim=c(min(na.omit(c(pd$xpred,pd$x)))-10,
-                                    max(na.omit(c(pd$xpred,pd$x)))+10),
-                             ylim=c(min(na.omit(c(pd$ypred,pd$y)))-10,
-                                    max(na.omit(c(pd$ypred,pd$y)))+10))+
-            theme_classic()+theme(axis.title = element_blank(),
-                                  legend.title = element_text(size=8),
-                                  legend.text=element_text(size=6),
-                                  axis.text=element_text(size=6),
-                                  # legend.box = "horizontal",
-                                  legend.position = args$legend_position)+
-            scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
-            scale_size_continuous(name="Training\nSamples")+
-            geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
-            geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
-            geom_segment(data=pd,aes(x=x,y=y,xend=gc_x,yend=gc_y),lwd=0.2)+
-            geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
+    if(centroid_method=="gc"){
+      truelocs <- ddply(pd,.(x,y),summarize,error=mean(dist_gc))
+      locsn <- ddply(locs,.(x,y),summarize,n=length(sampleID))
+      truelocs <- merge(truelocs,locsn,c("x","y"))
+      map <- crop(map,c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                        max(na.omit(c(pd$xpred,pd$x)))+10,
+                        min(na.omit(c(pd$ypred,pd$y)))-10,
+                        max(na.omit(c(pd$ypred,pd$y)))+10))
+      print(ggplot()+coord_map(projection = "mollweide",
+                               xlim=c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                                      max(na.omit(c(pd$xpred,pd$x)))+10),
+                               ylim=c(min(na.omit(c(pd$ypred,pd$y)))-10,
+                                      max(na.omit(c(pd$ypred,pd$y)))+10))+
+              theme_classic()+theme(axis.title = element_blank(),
+                                    legend.title = element_text(size=8),
+                                    legend.text=element_text(size=6),
+                                    axis.text=element_text(size=6),
+                                    # legend.box = "horizontal",
+                                    legend.position = args$legend_position)+
+              scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+              scale_size_continuous(name="Training\nSamples")+
+              geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+              geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
+              geom_segment(data=pd,aes(x=x,y=y,xend=gc_x,yend=gc_y),lwd=0.2)+
+              geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))
+    } else if(centroid_method=="kd") {
+      truelocs <- ddply(pd,.(x,y),summarize,error=mean(dist_kd))
+      locsn <- ddply(locs,.(x,y),summarize,n=length(sampleID))
+      truelocs <- merge(truelocs,locsn,c("x","y"))
+      map <- crop(map,c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                        max(na.omit(c(pd$xpred,pd$x)))+10,
+                        min(na.omit(c(pd$ypred,pd$y)))-10,
+                        max(na.omit(c(pd$ypred,pd$y)))+10))
+      print(ggplot()+coord_map(projection = "mollweide",
+                               xlim=c(min(na.omit(c(pd$xpred,pd$x)))-10,
+                                      max(na.omit(c(pd$xpred,pd$x)))+10),
+                               ylim=c(min(na.omit(c(pd$ypred,pd$y)))-10,
+                                      max(na.omit(c(pd$ypred,pd$y)))+10))+
+              theme_classic()+theme(axis.title = element_blank(),
+                                    legend.title = element_text(size=8),
+                                    legend.text=element_text(size=6),
+                                    axis.text=element_text(size=6),
+                                    # legend.box = "horizontal",
+                                    legend.position = args$legend_position)+
+              scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
+              scale_size_continuous(name="Training\nSamples")+
+              geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+              geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
+              geom_segment(data=pd,aes(x=x,y=y,xend=kd_x,yend=kd_y),lwd=0.2)+
+              geom_point(data=pd,aes(x=kd_x,y=kd_y),size=0.5,shape=1))
+    }
   } else {
     print(ggplot()+
             theme_classic()+theme(axis.title = element_blank(),

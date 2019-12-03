@@ -14,14 +14,6 @@ with warnings.catch_warnings():
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
 parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
-# parser.add_argument('--genotype_matrix',help="path to tab-delimited file containing genotypes. \ #working on this
-#                                               One row per individual, with each entry \
-#                                               giving the number of derived alleles at \
-#                                               each site (0/1/2). No header or row names. \
-#                                               Sample IDs should be linked with the \
-#                                               --sample_ids option.")
-# parser.add_argument('--sample_ids',help="path to file with sample IDs. One ID per row, \
-#                                          with order matching the --genotype_matrix file.")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
                          'sampleID \t x \t y'.\
@@ -95,14 +87,6 @@ parser.add_argument('--keep_weights',default='False',type=str,
 parser.add_argument('--load_params',default=None,type=str,
                     help='Path to a _params.json file to load parameters from a previous run.\
                           Parameters from the json file will supersede all parameters provided via command line.')
-# parser.add_argument('--predict_from_weights',default=None,type=str,
-#                    help='output string for parameters and model weights files to load \
-#                          (i.e. the --out parameter used for the previous run).\
-#                          If this parameter is used, filtering parameters and \
-#                          model weights will be loaded from a presvious training \
-#                          run and used to predict locations for all samples. Example:\
-#                          if a model has been trained and weights and stored as \
-#                          "test_weights.hdf5", use --predict_from_weights test')
 args=parser.parse_args()
 
 #set seed and gpu
@@ -113,10 +97,8 @@ if args.gpu_number is not None:
 
 #load old run parameters
 if args.load_params is not None:
-    #vcf=args.vcf;zarr=args.zarr;out=args.out
     with open(args.predict_from_weights+"_params", 'r') as f:
         args.__dict__ = json.load(f)
-    #args.vcf=vcf;args.zarr=zarr;args.out=out
     f.close()
 
 with open(args.out+'_params.json', 'w') as f:
@@ -136,9 +118,6 @@ def load_genotypes():
         vcf=allel.read_vcf(args.vcf,log=sys.stderr)
         genotypes=allel.GenotypeArray(vcf['calldata/GT'])
         samples=vcf['samples']
-    # elif args.genotype_matrix is not None:
-    #     genotypes=np.loadtxt(args.genotype_matrix)
-    #     samples=np.loadtxt(args.sample_ids)
     return genotypes,samples
 
 #sort sample data
@@ -465,27 +444,27 @@ elif args.jacknife in ['True','TRUE','T','true','t']:
 
 #
 #debugging params
-args=argparse.Namespace(vcf="/Users/cj/locator/data/ruhu/populations.snps.vcf",
-                        sample_data="/Users/cj/locator/data/ruhu/ruhu_sample_data_LAmasked.txt",
-                        train_split=0.9,
-                        seed=12345,
-                        zarr=None,
-                        boot=False,
-                        nboots=100,
-                        nlayers=10,
-                        jacknife="True",
-                        width=256,
-                        batch_size=32,
-                        max_epochs=5000,
-                        patience=20,
-                        impute_missing=True,
-                        max_SNPs=1000,
-                        min_mac=2,
-                        out="/Users/cj/locator/out/ruhu/LAruhu",
-                        model="dense",
-                        mode="predict",
-                        plot_history='True',
-                        locality_split=True,
-                        dropout_prop=0.25,
-                        gpu_number="0",
-                        n_predictions=1)
+# args=argparse.Namespace(vcf="/Users/cj/locator/data/ruhu/populations.snps.vcf",
+#                         sample_data="/Users/cj/locator/data/ruhu/ruhu_sample_data_LAmasked.txt",
+#                         train_split=0.9,
+#                         seed=12345,
+#                         zarr=None,
+#                         boot=False,
+#                         nboots=100,
+#                         nlayers=10,
+#                         jacknife="True",
+#                         width=256,
+#                         batch_size=32,
+#                         max_epochs=5000,
+#                         patience=20,
+#                         impute_missing=True,
+#                         max_SNPs=1000,
+#                         min_mac=2,
+#                         out="/Users/cj/locator/out/ruhu/LAruhu",
+#                         model="dense",
+#                         mode="predict",
+#                         plot_history='True',
+#                         locality_split=True,
+#                         dropout_prop=0.25,
+#                         gpu_number="0",
+#                         n_predictions=1)
