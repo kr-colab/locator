@@ -3,10 +3,11 @@ genotype or sequencing data.
 
 # Installation 
 
-requires python3, gnuplot, and the following packages:
+The easiest way to install `locator` is to download the github repo and run the setup script: 
 ```
-allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
-numpy, pandas, tensorflow, scipy, tqdm, argparse, gnuplotlib
+git clone https://github.com/cjbattey/locator.git
+cd locator
+python setup.py install
 ```
 
 Gnuplot (http://www.gnuplot.info/) can be installed with your favorite package manager, e.g. 
@@ -16,13 +17,12 @@ brew install gnuplot #mac
 sudo apt-get install gnuplot #linux
 ```
 
-To install the python dependencies, download the repository and run the setup script: 
+The main method requires python3, gnuplot, and the following packages:
 ```
-git clone https://github.com/cjbattey/locator.git
-cd locator
-python setup.py install
+allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
+numpy, pandas, tensorflow (1.15), scipy, tqdm, argparse, gnuplotlib
 ```
- 
+
 For large datasets or bootstrap uncertainty estimation we recommend 
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
