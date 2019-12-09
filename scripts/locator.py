@@ -20,29 +20,28 @@ parser.add_argument("--sample_data",
                           SampleIDs must exactly match those in the \
                           VCF. X and Y values for \
                           samples without known locations should \
-                          be NA. If a column named 'test' \
-                          is included, samples with test==True will be \
-                          used as the test set.")
-parser.add_argument("--mode",default="cv",
+                          be NA.")
+parser.add_argument("--mode",default="predict",
                     help="'cv' splits the sample by train_split \
                           and predicts on the test set. \
                           'predict' extracts samples with non-NaN \
                           coordinates, splits those by train_split \
                           for training and model evaluation, and returns \
-                          predictions for samples with NaN coordinates.")
+                          predictions for samples with NaN coordinates. \
+                          default: predict")
 parser.add_argument("--train_split",default=0.9,type=float,
                     help="0-1, proportion of samples to use for training. \
                           default: 0.9 ")
-parser.add_argument("--bootstrap",default="False",type=str,
-                    help="Run bootstrap replicates by retraining on bootstrapped data. True/False.\
-                    default: False")
-parser.add_argument("--jacknife",default="False",type=str,
+parser.add_argument("--bootstrap",default=False,action="store_true",
+                    help="Run bootstrap replicates by retraining on bootstrapped data.")
+parser.add_argument("--jacknife",default=False,action="store_true",
                     help="Run jacknife uncertainty estimate on a trained network. \
                     NOTE: we recommend this only as a fast heuristic -- use the bootstrap \
                     option or run windowed analyses for final results.")
 parser.add_argument("--jacknife_prop",default=0.05,type=float,
-                    help="proportion of SNPs to remove for jacknife resampling")
-parser.add_argument("--nboots",default=100,type=int,
+                    help="proportion of SNPs to remove for jacknife resampling.\
+                    default: 0.05")
+parser.add_argument("--nboots",default=50,type=int,
                     help="number of bootstrap replicates to run.\
                     default: 50")
 parser.add_argument("--batch_size",default=32,type=int,
@@ -59,17 +58,16 @@ parser.add_argument("--min_mac",default=2,type=int,
 parser.add_argument("--max_SNPs",default=None,type=int,
                     help="randomly select max_SNPs variants to use in the analysis \
                     default: None.")
-parser.add_argument("--impute_missing",default="True",type=str,
+parser.add_argument("--impute_missing",default=False,action="store_true",
                     help='default: True (if False, all alleles at missing sites are ancestral)')
 parser.add_argument("--dropout_prop",default=0.25,type=float,
-                     help="proportion of weights to drop at the dropout layer. \
+                     help="proportion of weights to zero at the dropout layer. \
                            default: 0.25")
 parser.add_argument("--nlayers",default=10,type=int,
-                    help="if model=='dense', number of fully-connected \
-                    layers in the network. \
-                    default: 10")
+                    help="number of layers in the network. \
+                        default: 10")
 parser.add_argument("--width",default=256,type=int,
-                    help="if model==dense, width of layers in the network\
+                    help="number of units per layer in the network\
                     default:256")
 parser.add_argument("--out",help="file name stem for output")
 parser.add_argument("--seed",default=None,type=int,
@@ -81,12 +79,13 @@ parser.add_argument('--plot_history',default=True,type=bool,
 parser.add_argument('--gnuplot',default=False,action="store_true",
                     help="print acii plot of training history to stdout? \
                     default: False")
-parser.add_argument('--keep_weights',default='False',type=str,
+parser.add_argument('--keep_weights',default=False,action="store_true",
                     help='keep model weights after training? \
                     default: False.')
 parser.add_argument('--load_params',default=None,type=str,
                     help='Path to a _params.json file to load parameters from a previous run.\
-                          Parameters from the json file will supersede all parameters provided via command line.')
+                          Parameters from the json file will supersede all parameters provided \
+                          via command line.')
 args=parser.parse_args()
 
 #set seed and gpu
@@ -159,7 +158,7 @@ def filter_snps(genotypes):
         derived_counts=genotypes.count_alleles()[:,1]
         ac_filter=[x >= args.min_mac for x in derived_counts] #drop SNPs with minor allele < min_mac
         genotypes=genotypes[ac_filter,:,:]
-    if args.impute_missing in ['TRUE','true','True',"T","t",True]:
+    if args.impute_missing:
         ac=replace_md(genotypes)
     else:
         ac=genotypes.to_allele_counts()[:,:,1]
@@ -237,7 +236,7 @@ def load_network(traingen,dropout_prop):
 
 #fit model and choose best weights
 def load_callbacks(boot):
-    if args.bootstrap in ['True','true','TRUE','t','T'] or args.jacknife in ['True','true','TRUE','t','T']:
+    if args.bootstrap or args.jacknife:
         checkpointer=keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_boot"+str(boot)+"_weights.hdf5",
                       verbose=1,
@@ -274,7 +273,7 @@ def train_network(model,traingen,testgen,trainlocs,testlocs):
                         verbose=1,
                         validation_data=(testgen,testlocs),
                         callbacks=[checkpointer,earlystop,reducelr])
-    if args.bootstrap in ['True','true','TRUE','T','t'] or args.jacknife in ['True','true','TRUE','T','t']:
+    if args.bootstrap or args.jacknife:
         model.load_weights(args.out+"_boot"+str(boot)+"_weights.hdf5")
     else:
         model.load_weights(args.out+"_weights.hdf5")
@@ -289,7 +288,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
     prediction=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in prediction])
     predout=pd.DataFrame(prediction)
     predout['sampleID']=samples[pred]
-    if args.bootstrap in ['TRUE','True','true','T','t'] or args.jacknife in ['TRUE','True','true','T','t']:
+    if args.bootstrap or args.jacknife:
         predout.to_csv(args.out+"_boot"+str(boot)+"_predlocs.txt",index=False)
         testlocs2=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
     else:
@@ -353,7 +352,7 @@ def plot_history(history,dists,gnuplot):
                     title='Test Error')
 
 #######################################################################
-if args.bootstrap in ['False','FALSE','F','false','f'] and args.jacknife in ['False','FALSE','F','false','f']:
+if not args.bootstrap and not args.jacknife:
     boot=None
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
@@ -366,12 +365,12 @@ if args.bootstrap in ['False','FALSE','F','false','f'] and args.jacknife in ['Fa
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
     dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
     plot_history(history,dists,args.gnuplot)
-    if args.keep_weights in ['False','F','FALSE','f','false']:
+    if not args.keep_weights:
         subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
     end=time.time()
     elapsed=end-start
     print("run time "+str(elapsed/60)+" minutes")
-elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['False','FALSE','F','false','f']:
+elif args.bootstrap:
     boot="FULL"
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
@@ -384,7 +383,7 @@ elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['Fal
     history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
     dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
     plot_history(history,dists,args.gnuplot)
-    if args.keep_weights in ['False','F','FALSE','f','false']:
+    if not args.keep_weights:
         subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
     end=time.time()
     elapsed=end-start
@@ -405,12 +404,12 @@ elif args.bootstrap in ['True','TRUE','T','true','t'] and args.jacknife in ['Fal
         history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs)
         dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen2)
         plot_history(history,dists,args.gnuplot)
-        if args.keep_weights in ['False','F','FALSE','f','false']:
+        if not args.keep_weights:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
         elapsed=end-start
         print("run time "+str(elapsed/60)+" minutes\n\n")
-elif args.jacknife in ['True','TRUE','T','true','t']:
+elif args.jacknife:
     boot="FULL"
     genotypes,samples=load_genotypes()
     sample_data,locs=sort_samples(samples)
@@ -439,7 +438,7 @@ elif args.jacknife in ['True','TRUE','T','true','t']:
             pg[:,i]=np.random.binomial(2,af[i],pg.shape[0])
             #pg[:,i]=af[i]
         dists=predict_locs(model,pg,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen,verbose=False) #TODO: check testgen behavior for printing R2 to screen with jacknife in predict mode
-    if args.keep_weights in ['False','F','FALSE','f','false']:
+    if not args.keep_weights:
         subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
 
 #

@@ -107,7 +107,7 @@ if(!is.null(samples) && grepl(",",samples)){
 
 pd <- merge(pd,locs,by="sampleID")
 
-if(error!="F"){
+if(error){
   print("calculating error")
   #get error for centroids and max kernel density locations
   bp <- ddply(pd,.(sampleID),function(e) {
