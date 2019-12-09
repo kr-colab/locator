@@ -27,7 +27,7 @@ For large datasets or bootstrap uncertainty estimation we recommend
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By default `--mode` is set to `predict`, which randomly splits samples with known locations into a training set (used to optimize weights and biases in the network) and a validation set (used to set the learning rate of the optimizer and to determine the stopping time of a training run). Predictions are then generated for samples with unknown locations. If `--mode cv` is used, predictions are instead generated for the validation set. 
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By default `--mode` is set to `predict`, which randomly splits samples with known locations into a training set (used to optimize weights and biases in the network) and a validation set (used to set the learning rate of the optimizer and to determine the stopping time of a training run). Predictions are then generated for samples with unknown locations. If `--mode cv` is used, predictions are instead generated for the validation set. In both cases, correlations and accuracy summaries printed to screen at the end of training are for the validation set. We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
 
 # Inputs
 Genotypes can read read from .vcf, vcf.gz, or zarr files.  
@@ -45,10 +45,12 @@ This command should fit a model to a simulated test dataset of
 ~10,000 SNPs and 450 individuals and predict the locations of 50 validation samples. 
 
 ```
-locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test --mode cv
+cd ~/locator
+mkdir out/test
+locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test
 ```
 
-It will produce 5 files: 
+It will produce 4 files: 
 
 test_predlocs.txt -- predicted locations  
 test_history.txt -- training history  
@@ -59,7 +61,7 @@ See all parameters with `python scripts/locator.py --h`
 
 # Uncertainty and variation across the genome
 For whole genome or dense SNP data, we recommend running locator in windows across the genome. 
-We did this by subsetting VCFs with Tabix:
+In the preprint we do this by subsetting VCFs with Tabix:
 
 ```
 step=2000000
@@ -108,14 +110,29 @@ plot_locator.R is a command line script that plots maps of locator output, inten
 
 Cross-validation results and predicted locations can be plotted with 
 ```
-Rscript scripts/plot_locator.R --infile out/jacknife --sample_data data/test_sample_data.txt --out out/jacknife/test --map F --error
+Rscript scripts/plot_locator.R --infile out/jacknife --sample_data data/test_sample_data.txt --out out/jacknife/test --map F
 
 ```
-This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` You can also calculate and plot validation error estimates by using the `--error` option. See all parameters with 
+This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png.` You can also calculate and plot validation error estimates by using the `--error` option if you provide a sample data file with true locations for all individuals. See all parameters with 
 ```
 Rscript scripts/plot_locator.R --help
 ```
 
+# Iterating over training/validation samples
+For datasets with few individuals from each locality, randomly splitting training and validation samples can sometimes result in slightly different inferences across runs. One way to deal with this variation is to train replicate models using different starting seeds, then estimate final locations as the centroid across multiple predictions:
+```
+#loop over seeds and generate five predictions using different sets of training and validation samples
+cd ~/locator
+for i in {12345,54321,2349560,549657840,48576593}
+do
+  locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt --out out/test/test_seed_$i --seed $i
+done
+
+#generate plots and centroid estimates
+Rscript scripts/plot_locator.R --infile out/test/ --sample_data data/test_sample_data.txt --out out/test/test --map F
+
+```
+The first command will train five separate `locator` models and generate predictions for the unknown individuals, and the second will calculate centroids (in `out/test/test_centroids.txt `and generate plot showing the spread of predicted locations (`out/test/test_windows.png`). In the `test_centroids` file, the "kd_x/y" columns give the location with highest kernal density, while the "gc_x/y" columns give the geographic centroids. See the preprint for details. 
 
 # License
 
