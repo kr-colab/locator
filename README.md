@@ -27,7 +27,12 @@ For large datasets or bootstrap uncertainty estimation we recommend
 running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By default `--mode` is set to `predict`, which randomly splits samples with known locations into a training set (used to optimize weights and biases in the network) and a validation set (used to set the learning rate of the optimizer and to determine the stopping time of a training run). Predictions are then generated for samples with unknown locations. If `--mode cv` is used, predictions are instead generated for the validation set. In both cases, correlations and accuracy summaries printed to screen at the end of training are for the validation set. We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. 
+
+By default `--mode` is set to `predict`, which randomly splits samples with known locations into a training set (used to optimize weights and biases in the network) and a validation set (used to set the learning rate of the optimizer and to determine the stopping time of a training run). Predictions are then generated for samples with unknown locations. If  
+`--mode cv` is used, predictions are instead generated for the validation set. 
+
+We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
 
 # Inputs
 Genotypes can read read from .vcf, vcf.gz, or zarr files.  
