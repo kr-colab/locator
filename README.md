@@ -17,7 +17,8 @@ brew install gnuplot #mac
 sudo apt-get install gnuplot #linux
 ```
 
-The main method requires python3, gnuplot, and the following packages:
+The `setup.py` script should deal with dependencies for you, however
+if you run in to trouble the main method requires python3, gnuplot, and the following packages:
 ```
 allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
 numpy, pandas, tensorflow (1.15), scipy, tqdm, argparse, gnuplotlib
