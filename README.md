@@ -1,5 +1,5 @@
 `Locator` is a supervised machine learning method for predicting the geographic origin of a sample from
-genotype or sequencing data.   
+genotype or sequencing data. A manuscript describing it and its use can be found at https://doi.org/10.1101/2019.12.11.872051 
 
 # Installation 
 
