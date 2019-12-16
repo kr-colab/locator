@@ -5,7 +5,7 @@ genotype or sequencing data. A manuscript describing it and its use can be found
 
 The easiest way to install `locator` is to download the github repo and run the setup script: 
 ```
-git clone https://github.com/cjbattey/locator.git
+git clone https://github.com/kern-lab/locator.git
 cd locator
 python setup.py install
 ```
