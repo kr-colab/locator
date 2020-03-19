@@ -144,7 +144,7 @@ The first command will train five separate `locator` models and generate predict
 
 # License
 
-This software is available free for all non-commercial use under the non-profit open software license v 3.0 (see LICENSE.txt). Please contact cjbattey@gmail.com to license for commercial use.
+This software is available free for all non-commercial use under the non-profit open software license v 3.0 (see LICENSE.txt).
 
 
 
