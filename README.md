@@ -36,7 +36,7 @@ By default `--mode` is set to `predict`, which randomly splits samples with know
 We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
 
 # Inputs
-Genotypes can read read from .vcf, vcf.gz, or zarr files.  
+Genotypes can read in from .vcf, vcf.gz, .zarr, or a tab-delimited table with first column 'sampleID' and each entry giving the count of minor (or derived) alleles for an individual at a site. The current implementation expects diploid inputs. Please file an issue if you'd like to use Locator for other ploidies.    
 
 Sample metadata should be a tab-delimited file with the first row:  
 
