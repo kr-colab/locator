@@ -10,6 +10,7 @@ with warnings.catch_warnings():
     import argparse
     import gnuplotlib as gp
     import json
+    from keras import backend as K
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -443,6 +444,7 @@ elif args.bootstrap:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
         elapsed=end-start
+        K.clear_session()
         print("run time "+str(elapsed/60)+" minutes\n\n")
 elif args.jacknife:
     boot="FULL"
