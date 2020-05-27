@@ -24,7 +24,7 @@ parser$add_argument('--legend_position',default="bottom",help="legend position f
 parser$add_argument('--map',default="T",type="character",help="plot basemap? default = T")
 parser$add_argument('--longlat',default=FALSE,action="store_true",help="set to TRUE if coordinates are x and y in decimal degrees for error in kilometers. default: FALSE. ")
 parser$add_argument('--haploid',default=FALSE,action="store_true",help="set to TRUE if predictions are from locator_phased.py. Predictions will be plotted for each haploid chromosome separately. default: FALSE.")
-parser$add_argument('--centroid_method',default="gc",help="Method for summarizing window/bootstrap predictions. Options 'gc' (take the centroid of window predictions with rgeos::gCentroid() ) or 'kd' (take the location of maximum density after kernal density estimation with mass::kde( )). default: gc")
+parser$add_argument('--centroid_method',default="kd",help="Method for summarizing window/bootstrap predictions. Options 'gc' (take the centroid of window predictions with rgeos::gCentroid() ) or 'kd' (take the location of maximum density after kernal density estimation with mass::kde( )). default: kd")
 args <- parser$parse_args()
 
 infile <- args$infile
@@ -265,7 +265,8 @@ if(error != "F"){
                                     legend.position = args$legend_position)+
               scale_color_distiller(palette = "RdYlBu",name="Mean Error\n(km)")+
               scale_size_continuous(name="Training\nSamples")+
-              geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+              geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey50",color="white",lwd=0.2)+
+              geom_point(data=locs,aes(x=x,y=y),shape=1,color="grey30",size=0.6,stroke=0.3)+
               geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
               geom_segment(data=pd,aes(x=x,y=y,xend=kd_x,yend=kd_y),lwd=0.2)+
               geom_point(data=pd,aes(x=kd_x,y=kd_y),size=0.5,shape=1))
@@ -281,6 +282,7 @@ if(error != "F"){
             scale_color_distiller(palette = "RdYlBu",name="Mean Error")+
             scale_size_continuous(name="Training\nSamples")+
             #geom_polygon(data=fortify(map),aes(x=long,y=lat,group=group),fill="grey",color="white",lwd=0.2)+
+            geom_point(data=locs,aes(x=x,y=y),shape=1,color="grey50",size=0.6,stroke=0.3)+
             geom_point(data=truelocs,aes(x=x,y=y,color=error,size=n))+
             geom_segment(data=pd,aes(x=x,y=y,xend=gc_x,yend=gc_y),lwd=0.2)+
             geom_point(data=pd,aes(x=gc_x,y=gc_y),size=0.5,shape=1))

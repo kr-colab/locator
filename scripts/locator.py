@@ -10,10 +10,17 @@ with warnings.catch_warnings():
     import argparse
     import gnuplotlib as gp
     import json
+    from keras import backend as K
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
 parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
+parser.add_argument("--matrix",help="tab-delimited matrix of minor allele counts with first column named 'sampleID'.\
+                                     E.g., \
+                                     \
+                                     sampleID\tsite1\tsite2\t...\n \
+                                     msp1\t0\t1\t...\n \
+                                     msp2\t2\t0\t...\n ")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
                          'sampleID \t x \t y'.\
@@ -117,6 +124,31 @@ def load_genotypes():
         vcf=allel.read_vcf(args.vcf,log=sys.stderr)
         genotypes=allel.GenotypeArray(vcf['calldata/GT'])
         samples=vcf['samples']
+    elif args.matrix is not None:
+        gmat=pd.read_csv(args.matrix,sep="\t")
+        samples=np.array(gmat['sampleID'])
+        gmat=gmat.drop(labels="sampleID",axis=1)
+        gmat=np.array(gmat,dtype="int8")
+        for i in range(gmat.shape[0]): #kludge to get haplotypes for reading in to allel.
+            h1=[];h2=[]
+            for j in range(gmat.shape[1]):
+                count=gmat[i,j]
+                if count==0:
+                    h1.append(0)
+                    h2.append(0)
+                elif count==1:
+                    h1.append(1)
+                    h2.append(0)
+                elif count==2:
+                    h1.append(1)
+                    h2.append(1)
+            if i==0:
+                hmat=h1
+                hmat=np.vstack((hmat,h2))
+            else:
+                hmat=np.vstack((hmat,h1))
+                hmat=np.vstack((hmat,h2))
+        genotypes=allel.HaplotypeArray(np.transpose(hmat)).to_genotypes(ploidy=2)
     return genotypes,samples
 
 #sort sample data
@@ -301,7 +333,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
         median_dist=np.median([spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))])
         dists=[spatial.distance.euclidean(prediction[x,:],testlocs2[x,:]) for x in range(len(prediction))]
         if verbose==True:
-            print("R2(x)="+str(r2_long)+"\nR2(y)="+str(r2_lat)+"\n"
+            print("validation R2(x)="+str(r2_long)+"\nvalidation R2(y)="+str(r2_lat)+"\n"
                    +"mean validation error "+str(mean_dist)+"\n"
                    +"median validation error "+str(median_dist)+"\n")
     elif args.mode=="predict":
@@ -351,6 +383,10 @@ def plot_history(history,dists,gnuplot):
                     terminal='dumb 60 20',
                     title='Test Error')
 
+
+
+#######################################################################
+#######################################################################
 #######################################################################
 if not args.bootstrap and not args.jacknife:
     boot=None
@@ -408,6 +444,7 @@ elif args.bootstrap:
             subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
         end=time.time()
         elapsed=end-start
+        K.clear_session()
         print("run time "+str(elapsed/60)+" minutes\n\n")
 elif args.jacknife:
     boot="FULL"
@@ -442,26 +479,28 @@ elif args.jacknife:
         subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
 
 #
-#debugging params
-# args=argparse.Namespace(vcf="/Users/cj/locator/data/ruhu/populations.snps.vcf",
-#                         sample_data="/Users/cj/locator/data/ruhu/ruhu_sample_data_LAmasked.txt",
+###debugging params
+# args=argparse.Namespace(vcf=None,#"/Users/cj/locator/data/test_genotypes.vcf.gz",
+#                         matrix="/Users/cj/locator/data/cedar/ceod_sl_sa_genotypes.txt",
+#                         sample_data="/Users/cj/locator/data/cedar/ceod_sl_sa_sample_data.txt",
 #                         train_split=0.9,
 #                         seed=12345,
 #                         zarr=None,
 #                         boot=False,
+#                         load_params=None,
 #                         nboots=100,
-#                         nlayers=10,
+#                         nlayers=8,
 #                         jacknife="True",
 #                         width=256,
 #                         batch_size=32,
 #                         max_epochs=5000,
+#                         bootstrap=False,
 #                         patience=20,
 #                         impute_missing=True,
-#                         max_SNPs=1000,
+#                         max_SNPs=None,
 #                         min_mac=2,
-#                         out="/Users/cj/locator/out/ruhu/LAruhu",
-#                         model="dense",
-#                         mode="predict",
+#                         out="/Users/cj/locator/out/cedar",
+#                         mode="cv",
 #                         plot_history='True',
 #                         locality_split=True,
 #                         dropout_prop=0.25,
