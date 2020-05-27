@@ -19,8 +19,8 @@ parser.add_argument("--matrix",help="tab-delimited matrix of minor allele counts
                                      E.g., \
                                      \
                                      sampleID\tsite1\tsite2\t...\n \
-                                     msp1\t0\t1\t... \
-                                     msp2\t2\t0\t... ")
+                                     msp1\t0\t1\t...\n \
+                                     msp2\t2\t0\t...\n ")
 parser.add_argument("--sample_data",
                     help="tab-delimited text file with columns\
                          'sampleID \t x \t y'.\
