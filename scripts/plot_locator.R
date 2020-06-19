@@ -205,7 +205,7 @@ legend(x="top",
 dev.off()
 
 
-if(error != "F"){
+if(error){
   pdf(paste0(out,"_summary.pdf"),width=6,height=3.25,useDingbats = F)
   if(usemap=="T"){
     if(centroid_method=="gc"){
