@@ -41,9 +41,9 @@ haploid <- args$haploid
 nsamples <- args$nsamples
 centroid_method <- args$centroid_method
 
-# infile <- "~/locator/out/ag1000g/windows_2mbp_predict/"
-# sample_data <- "~/locator/data/ag1000g/ag1000g_phase1_samples.txt"
-# out <- "~/Desktop/ag1000g_predict"
+# infile <- "~/Downloads/locator/bootstraps/"
+# sample_data <- "~/Downloads/locator/city_2.txt"
+# out <- "~/Desktop/locator_plot_test"
 # width <- 5
 # height <- 4
 # samples <- NULL
@@ -85,17 +85,6 @@ if(grepl("predlocs.txt",infile)){
 }
 
 locs <- fread(sample_data,data.table=F)
-names(locs)[1:3] <- c("sampleID","x","y")
-if(haploid==T){
-  locs2 <- locs
-  locs$sampleID <- paste0(locs$sampleID,"_h0")
-  locs2$sampleID <- paste0(locs2$sampleID,"_h1")
-  locs <- rbind(locs,locs2)
-}
-
-#extra filters for pf7k data (qc fail samples put in prediction set and dropped here)
-#locs <- subset(locs,population!="Lab" & qc==T)
-#pd <- subset(pd,sampleID %in% locs$sampleID)
 
 if(!is.null(samples) && grepl(",",samples)){
   samples <- unlist(strsplit(samples,","))
