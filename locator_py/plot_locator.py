@@ -15,7 +15,7 @@ import seaborn as sns
 from shapely import geometry
 import pyproj
 import sys
-import json
+import zarr
 
 ## ADD ARGUMENTS
 
@@ -92,7 +92,7 @@ if error != False:
     print('calculating error')
     #bp = {}
     ids = np.empty(len(samples), dtype = 'object')
-    kd_xy = np.empty(len(samples))
+    kd_x = np.empty(len(samples))
     kd_y = np.empty(len(samples))
     gc_x = np.empty(len(samples))
     gc_y = np.empty(len(samples))
@@ -100,8 +100,6 @@ if error != False:
     count = 0
     for item in samples:
         seriesObj = aeg.apply(lambda x: True if x['sampleID'] == item else False , axis=1)
-        #print(seriesObj)
-        #numOfRows = len(seriesObj[seriesObj == True].index)
         xcoords = np.empty(len(seriesObj[seriesObj == True].index))
         ycoords = np.empty(len(seriesObj[seriesObj == True].index))
         ticker = 0
@@ -143,8 +141,7 @@ if error != False:
 
 ## PLOT
 
-with open('map.json') as data_file:    
-    data = json.load(data_file)  
+mapp = zarr.open('map.zarr', mode = 'r')
 def plot(sample, locs):
     print("plotting")
     print(sample)
@@ -174,36 +171,12 @@ def plot(sample, locs):
     fig, ax = plt.subplots()
     ax.patch.set_facecolor('#fefdfc')
     if usemap == 'T':
-        for a in data['features']:
-            if a['geometry']['type'] == 'MultiPolygon':
-                for item in a['geometry']['coordinates']:
-                    x = []
-                    y = []
-                    for i in item:
-                        for num in range(len(i)):
-                            x.append(i[num][0])
-                            y.append(i[num][1])
-                    ax.plot(x, y, '#fefdfc')
-                    x_lon = np.zeros((len(x),1))
-                    y_lat = np.zeros((len(x),1))
-                    for ip in range(len(x)):
-                        x_lon[ip] = x[ip]
-                        y_lat[ip] = y[ip]
-                    ax.fill(x_lon, y_lat, '#C5CBCB')
-            elif a['geometry']['type'] == 'Polygon':
-                x = []
-                y = []
-                for item in a['geometry']['coordinates']:
-                    for i in item:
-                        x.append(i[0])
-                        y.append(i[1])
+        for group in mapp:
+            for item in mapp[group]:
+                x = mapp[group][item][0]
+                y = mapp[group][item][1]
                 ax.plot(x, y, '#fefdfc')
-                x_lon = np.zeros((len(x),1))
-                y_lat = np.zeros((len(x),1))
-                for ip in range(len(x)):
-                    x_lon[ip] = x[ip]
-                    y_lat[ip] = y[ip]
-                ax.fill(x_lon, y_lat, '#C5CBCB')
+                ax.fill(x, y, '#C5CBCB')
     ax.set_xlim(xmin,xmax)
     ax.set_ylim(ymin,ymax)
     ax1 = fig.add_subplot()
