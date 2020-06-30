@@ -10,10 +10,7 @@ import matplotlib as mpl
 from matplotlib import cm
 from math import sin, cos, sqrt, atan2, radians
 from sklearn.neighbors import KernelDensity as kd
-import shapefile
 import seaborn as sns
-from shapely import geometry
-import pyproj
 import sys
 import zarr
 
