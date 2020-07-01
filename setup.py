@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(name='locator',
       version='1.1',
-      description='Locator: estimating geographic location from genetic variation',
+      description='supervised machine learning of geographic location from genetic variation',
       long_description=long_description,
       long_description_content_type="text/markdown",
       url='https://github.com/kern-lab/locator',
