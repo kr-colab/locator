@@ -155,7 +155,7 @@ The first command will train five separate `locator` models and generate predict
 # Diagnosing Failures
 We recommend all users read the paper (https://elifesciences.org/articles/54507) before using Locator to get an idea of when and how it can fail. In general, location prediction works better in populations with less dispersal and datasets with more SNPs. When run on populations with too much dispersal or too little data, Locator tends to predict the middle of the distribution of training points. This behavior can also occur when a species is strongly structured in only one direction -- for example, if there is a strong north-south cline in allele frequencies but no east-west variation, Locator will typically generate accurate latitude predictions but will guess the middle of the longitudinal range of training points. 
 
-The best way to diagnose these failures is to note the $R^2$ values printed to screen at the end of each Locator training run: 
+The best way to diagnose these failures is to note the <img src="https://latex.codecogs.com/gif.latex?R^2"/> values printed to screen at the end of each Locator training run: 
 ```
 predicting locations...
 R2(x)=0.9484760204379148
