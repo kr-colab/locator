@@ -15,7 +15,7 @@ python setup.py install
 
 Users without admin access may be able to install to their user account with:
 ```
-python -m pip install --user git+https://github.com/cjbattey/locator
+python -m pip install --user git+https://github.com/kern-lab/locator
 ```
 
 The `setup.py` script should deal with dependencies for you, however
