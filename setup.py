@@ -3,28 +3,26 @@ from setuptools import setup, find_packages
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-setup(name='locator-pip',
-      version='0.1.2',
-      description='Locator: estimating geographic location from genetic variation',
+setup(name='locator',
+      version='1.1',
+      description='supervised machine learning of geographic location from genetic variation',
       long_description=long_description,
       long_description_content_type="text/markdown",
-      url='https://github.com/cjbattey/locator',
-      author='CJ Battey, Peter Ralph, Andrew Kern',
-      author_email='cbattey2@uoregon.edu, plr@uoregon.edu, adk@uoregon.edu',
+      url='https://github.com/kern-lab/locator',
       license='NPOSL-3.0',
       packages=find_packages(exclude=[]),
-      install_requires=["numpy",
+      install_requires=["numpy<1.19.0",
+                        "tensorflow",
                         "h5py",
                         "scikit-allel",
                         "matplotlib",
-                        "scipy",
-                        "keras",
-                        "tensorflow==1.15.2",
+                        "scipy==1.4.1",
                         "tqdm",
                         "pandas",
                         "zarr",
+                        "seaborn",
                         "gnuplotlib"],
       scripts=["scripts/locator.py"],
       zip_safe=False,
-      setup_requires=[]
+      setup_requires=["numpy"]
 )
