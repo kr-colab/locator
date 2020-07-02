@@ -13,6 +13,11 @@ cd locator
 python setup.py install
 ```
 
+Users without admin access may be able to install to their user account with:
+```
+python -m pip install --user git+https://github.com/cjbattey/locator
+```
+
 The `setup.py` script should deal with dependencies for you, however
 if you run in to trouble the main method requires python3, gnuplot, and the following packages:
 ```
