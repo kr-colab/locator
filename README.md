@@ -3,7 +3,8 @@ genotype or sequencing data. A manuscript describing it and its use can be found
 
 # Installation 
 
-The easiest way to install `locator` is to download the github repo and run the setup script in a new conda environment: 
+The easiest way to install `locator` is to download the github repo and run the setup script. It's usually a good idea to do this in a new conda environment (https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) to avoid version conflicts with other software: 
+
 ```
 conda create --name locator
 conda activate locator
@@ -16,13 +17,13 @@ The `setup.py` script should deal with dependencies for you, however
 if you run in to trouble the main method requires python3, gnuplot, and the following packages:
 ```
 allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
-numpy, pandas, tensorflow (v2+), scipy, tqdm, argparse, gnuplotlib
+numpy, pandas, tensorflow (v2+), scipy (1.4.1), tqdm, argparse, gnuplotlib
 ```
 
 We recommend running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. 
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By fitting multiple models to different regions of the genome or to bootstrapped subsets of the full SNP matrix, the approach can also estimate uncertainty in a location estimate. 
 
 We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
 
@@ -139,6 +140,22 @@ Rscript scripts/plot_locator.R --infile out/test/ --sample_data data/test_sample
 
 ```
 The first command will train five separate `locator` models and generate predictions for the unknown individuals, and the second will calculate centroids (in `out/test/test_centroids.txt `and generate plot showing the spread of predicted locations (`out/test/test_windows.png`). In the `test_centroids` file, the "kd_x/y" columns give the location with highest kernal density, while the "gc_x/y" columns give the geographic centroids. See the preprint for details. 
+
+# Diagnosing Failures
+We recommend all users read the paper (https://elifesciences.org/articles/54507) before using Locator to get an idea of when and how it can fail. In general, location prediction works better in populations with less dispersal and datasets with more SNPs. When run on populations with too much dispersal or too little data, Locator tends to predict the middle of the distribution of training points. This behavior can also occur when a species is strongly structured in only one direction -- for example, if there is a strong north-south cline in allele frequencies but no east-west variation, Locator will typically generate accurate latitude predictions but will guess the middle of the longitudinal range of training points. 
+
+The best way to diagnose these failures is to note the $R^2$ values printed to screen at the end of each Locator training run: 
+```
+predicting locations...
+R2(x)=0.9484760204379148
+R2(y)=0.9596984359743175
+mean validation error 3.7585447303960313
+median validation error 3.3019781150072984
+
+run time 0.6170202493667603 minutes
+```
+These values describe the correlation between predicted and true locations in each dimension for the set of validation samples used during model training. If one or both of these numbers is low, expect predictions on that dimension to collapse towards the mean. In our tests, error on the test set is typically very similar to that on the validation set, so the validation errors printed here should also give you a rough estimate of how far off predictions should be in your dataset. 
+
 
 # License
 
