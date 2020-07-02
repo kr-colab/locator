@@ -8,14 +8,14 @@ The easiest way to install `locator` is to download the github repo and run the 
 ```
 conda create --name locator
 conda activate locator
-git clone https://github.com/kern-lab/locator.git
+git clone https://github.com/kr-colab/locator.git
 cd locator
 python setup.py install
 ```
 
 Users without admin access may be able to install to their user account with:
 ```
-python -m pip install --user git+https://github.com/kern-lab/locator
+python -m pip install --user git+https://github.com/kr-colab/locator
 ```
 
 The `setup.py` script should deal with dependencies for you, however
