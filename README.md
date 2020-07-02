@@ -28,9 +28,7 @@ numpy, pandas, tensorflow (v2+), scipy (1.4.1), tqdm, argparse, gnuplotlib
 We recommend running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
-`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. By fitting multiple models to different regions of the genome or to bootstrapped subsets of the full SNP matrix, the approach can also estimate uncertainty in a location estimate. 
-
-We also provide a command-line R program `scripts/plot_locator.R` to summarize error and generate plots from multiple `locator` predictions for each individual (i.e. from windowed analysis or bootstraps).
+`locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. Samples with known locations are split randomly into a training set (used to fit model parameters) and a validation set (used to evaluate set hyperparameters of the optimizer and evaluate error after training). Predictions are then generated for all samples with unknown coordinates. By fitting multiple models to different regions of the genome or to bootstrapped subsets of the full SNP matrix, the approach can also estimate uncertainty in a location estimate. 
 
 # Inputs
 Genotypes can read in from .vcf, vcf.gz, .zarr, or a tab-delimited table with first column 'sampleID' and each entry giving the count of minor (or derived) alleles for an individual at a site. The current implementation expects diploid inputs. Please file an issue if you'd like to use Locator for other ploidies.    
@@ -63,7 +61,11 @@ test_fitplot.pdf -- plot of training history
 See all parameters with `python scripts/locator.py --h`
 
 ## Uncertainty and Windowed Analysis
-Generating multiple predictions by fitting separate models to windows across the genome allows estimates of uncertainty and intragenomic variation for an individual-level prediction. Using the `--windows` option will generate separate predictions for nonoverlapping windows of size `--window_size` (default 500,000bp). This option requires zarr input for fast chunked array access. We provide a wrapper function for scikit-allel's vcf_to_zarr() function in scripts/vcf_to_zarr.py. Convert the test data to zarr format and run a windowed analysis with:
+Generating multiple predictions by fitting separate models to windows across the genome allows estimates of uncertainty and intragenomic variation for an individual-level prediction. Using the `--windows` option will generate separate predictions for nonoverlapping windows of size `--window_size` (default 500,000bp).  
+
+This option requires zarr input for fast chunked array access. We provide a wrapper function for scikit-allel's vcf_to_zarr() function in scripts/vcf_to_zarr.py.   
+
+Convert the test data to zarr format and run a windowed analysis with:
 
 ```
 python scripts/vcf_to_zarr.py --vcf data/test_genotypes.vcf.gz --zarr data/test_genotypes.zarr
@@ -119,13 +121,17 @@ locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.
 
 # Plotting and summarizing output
 plot_locator.R is a command line script that calculates centroids from multiple locator predictions, estimates errors (if true locations for all samples are provided) and plots maps of locator output. It is intended for runs with multiple outputs (either windowed analyses, bootstraps, or jacknife replicates). Install the required packages by running 
+
 ```Rscript scripts/install_R_packages.R```
 
 Calculate centroids and plot predictions for our jacknife predictions with:
+
 ```
 Rscript scripts/plot_locator.R --infile out/test_windows/ --sample_data data/test_sample_data.txt --out out/test_ --map F
 ```
+
 This will plot predictions and uncertainties for 9 randomly selected individuals to `/out/jacknife/test_windows.png`, and print the locations with peak kernal density ("kd_x/y") and the geographic centroids ("gc_x/y") across jacknife replicates to `out/jacknife/test_centroids.txt`. You can also calculate and plot validation error estimates by using the `--error` option if you provide a sample data file with true locations for all individuals. See all parameters with 
+
 ```
 Rscript scripts/plot_locator.R --help
 ```
