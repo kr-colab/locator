@@ -39,7 +39,7 @@ Sample metadata should be a tab-delimited file with the first row:
 
 `sampleID	x	y`
 
-Use NA or NaN for samples with unknown locations. Metadata must include all samples in the genotypes file. 
+Use NA or NaN for x and y values of samples with unknown locations. Metadata must include all samples in the genotypes file. 
 
 
 # Examples
