@@ -10,7 +10,11 @@ import matplotlib as mpl
 from matplotlib import cm
 from math import sin, cos, sqrt, atan2, radians
 from sklearn.neighbors import KernelDensity as kd
+<<<<<<< HEAD
 import scipy.interpolate
+=======
+import seaborn as sns
+>>>>>>> e3e1dfa35179895845c8ac1fc9aabaa133daf128
 import sys
 import zarr
 from sklearn.neighbors import KernelDensity
