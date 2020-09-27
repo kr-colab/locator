@@ -86,6 +86,11 @@ parser.add_argument('--load_params',default=None,type=str,
                     help='Path to a _params.json file to load parameters from a previous run.\
                           Parameters from the json file will supersede all parameters provided \
                           via command line.')
+parser.add_argument('--keras_verbose',default=1,type=int,
+                    help='verbose argument passed to keras in model training. \
+                    0 = silent. 1 = progress bars for minibatches. 2 = show epochs. \
+                    Yes, 1 is more verbose than 2. Blame keras. \
+                    default: 1. ')
 args=parser.parse_args()
 
 #set seed and gpu
@@ -234,7 +239,7 @@ def load_callbacks(boot):
     if args.bootstrap or args.jacknife:
         checkpointer=tf.keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_boot"+str(boot)+"_weights.hdf5",
-                      verbose=1,
+                      verbose=args.keras_verbose,
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
@@ -242,7 +247,7 @@ def load_callbacks(boot):
     else:
         checkpointer=tf.keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_weights.hdf5",
-                      verbose=1,
+                      verbose=args.keras_verbose,
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
@@ -253,7 +258,7 @@ def load_callbacks(boot):
     reducelr=tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss',
                                                factor=0.5,
                                                patience=int(args.patience/6),
-                                               verbose=1,
+                                               verbose=args.keras_verbose,
                                                mode='auto',
                                                min_delta=0,
                                                cooldown=0,
@@ -265,7 +270,7 @@ def train_network(model,traingen,testgen,trainlocs,testlocs):
                         epochs=args.max_epochs,
                         batch_size=args.batch_size,
                         shuffle=True,
-                        verbose=1,
+                        verbose=args.keras_verbose,
                         validation_data=(testgen,testlocs),
                         callbacks=[checkpointer,earlystop,reducelr])
     if args.bootstrap or args.jacknife:
