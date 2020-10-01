@@ -154,6 +154,7 @@ def sort_samples(samples):
     sample_data=pd.read_csv(args.sample_data,sep="\t")
     sample_data['sampleID2']=sample_data['sampleID']
     sample_data.set_index('sampleID',inplace=True)
+    samples = samples.astype('str')
     sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
     if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
         print("sample ordering failed! Check that sample IDs match the VCF.")
