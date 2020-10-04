@@ -150,15 +150,37 @@ def load_genotypes():
         genotypes=allel.HaplotypeArray(np.transpose(hmat)).to_genotypes(ploidy=2)
     return genotypes,samples
 
+def check_samples(sample_data,samples):
+    print("error: problem merging genotypes and sample_data")
+    samples_counts=np.unique(samples,return_counts=True)[1]
+    sample_data_counts=np.unique(np.array(sample_data['sampleID2']),return_counts=True)[1]
+    if any(samples_counts>1):
+        print("duplicate genotype sample IDs:",
+              np.unique(samples)[np.where(samples_counts>1)])
+        return
+    elif any(sample_data_counts>1):
+        print("duplicate sample_data entries:",
+              np.unique(sample_data['sampleID2'])[np.where(sample_data_counts>1)])
+        return
+    missing_from_metadata=[x not in np.array(sample_data['sampleID2']) for x in samples]
+    missing_from_vcf=[x not in samples for x in sample_data['sampleID2']]
+    print(" vcf samples missing from sample_data:",
+          np.array(samples)[missing_from_metadata],"\n",
+          "sample_data samples missing from vcf:",
+          np.array(sample_data['sampleID2'])[missing_from_vcf])
+
 def sort_samples(samples):
+    samples = np.array(samples.astype('str'))
     sample_data=pd.read_csv(args.sample_data,sep="\t")
     sample_data['sampleID2']=sample_data['sampleID']
     sample_data.set_index('sampleID',inplace=True)
-    samples = samples.astype('str')
-    sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
-    if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
-        print("sample ordering failed! Check that sample IDs match the VCF.")
+    if not len(sample_data)==len(samples):
+        check_samples(sample_data,samples)
         sys.exit()
+    if not all([x in samples for x in sample_data['sampleID2']]):
+        check_samples(sample_data,samples)
+        sys.exit()
+    sample_data=sample_data.reindex(np.array(samples))
     locs=np.array(sample_data[["x","y"]])
     print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
     return(sample_data,locs)
@@ -465,8 +487,8 @@ else:
 ###debugging params
 # args=argparse.Namespace(vcf=None,#"/Users/cj/locator/data/test_genotypes.vcf.gz",
 #                         matrix=None,#"/Users/cj/locator/data/test_genotypes.vcf.gz",
-#                         zarr="/Users/cj/locator/data/test_genotypes.zarr",
-#                         sample_data="/Users/cj/locator/data/test_sample_data.txt",
+#                         zarr="/Users/cj/locator_dev/locator/data/test_genotypes.zarr",
+#                         sample_data="/Users/cj/locator_dev/locator/data/test_sample_data2.txt",
 #                         train_split=0.9,
 #                         windows=True,
 #                         window_start=0,
