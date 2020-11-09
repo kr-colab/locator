@@ -91,7 +91,7 @@ parser.add_argument('--keras_verbose',default=1,type=int,
                     0 = silent. 1 = progress bars for minibatches. 2 = show epochs. \
                     Yes, 1 is more verbose than 2. Blame keras. \
                     default: 1. ')
-parser.add_argument('--weight_samples',default=False,type=bool,help='normalize sample loss across space (for uneven location sampling)')
+parser.add_argument('--weight_samples',default=False,action="store_true",help='normalize sample loss across space for uneven location sampling.')
 args=parser.parse_args()
 
 #set seed and gpu
@@ -169,20 +169,20 @@ def sort_samples(samples):
 def weights(sample_data, test):
     uniq_locs = []
     for i in range(len(sample_data)):
-        if np.isnan(sample_data.loc[i, 'x']) != True:
+        if not np.isnan(sample_data.loc[i, 'x']):
             if (round(sample_data.loc[i, 'x']), round(sample_data.loc[i, 'y'])) not in uniq_locs:
                 uniq_locs.append((round(sample_data.loc[i, 'x']), round(sample_data.loc[i, 'y'])))
     loc_dict = {}
     for point in uniq_locs:
         count = 0
         for i in range(len(sample_data)):
-            if np.isnan(sample_data.loc[i, 'x']) != True:
+            if not np.isnan(sample_data.loc[i, 'x']):
                 if (round(sample_data.loc[i, 'x']), round(sample_data.loc[i, 'y'])) == point:
                     count += 1
         loc_dict.update({point : count})
     sample_weights = []
     for i in range(len(sample_data)):
-        if np.isnan(sample_data.loc[i, 'x']) != True and i not in test:
+        if not np.isnan(sample_data.loc[i, 'x']) and i not in test:
             sample_weights.append(10 ** -(loc_dict[(round(sample_data.loc[i, 'x']), round(sample_data.loc[i, 'y']))]))
     return np.array(sample_weights)
 
@@ -382,7 +382,7 @@ if args.windows:
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
-        if args.weight_samples == True:
+        if args.weight_samples:
             sample_weights = weights(sample_data,test)
         else:
             sample_weights = None
