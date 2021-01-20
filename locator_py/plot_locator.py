@@ -1,278 +1,238 @@
-## IMPORT LIBRARIES
-
-import argparse
-import scipy as sp
-import pandas as pd
-import os
-import matplotlib.pyplot as plt
-import numpy as np
-import matplotlib as mpl
-from matplotlib import cm
+import argparse, scipy as sp, pandas as pd, os, numpy as np, matplotlib as mpl, zarr
+from matplotlib import pyplot as plt
 from math import sin, cos, sqrt, atan2, radians
-from sklearn.neighbors import KernelDensity as kd
-import scipy.interpolate
-import sys
-import zarr
 from sklearn.neighbors import KernelDensity
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-## ADD ARGUMENTS
-
-parser = argparse.ArgumentParser(description = "Plot summary of a set of locator predictions.")
-parser.add_argument('--infile', help = "path to folder with .predlocs files")
-parser.add_argument('--sample_data', help = "path to sample_data file (should be WGS1984 x / y if map=TRUE.")
-parser.add_argument('--out', help = "path to output (will be appended with _typeofplot.pdf)")
-parser.add_argument('--width', default = 10, type = float, help = "width in inches of the output map. default = 5")
-parser.add_argument('--sample', default = None, type = str, help = "sample ID to plot. if no argument is provided, a random sample will be plotted")
-parser.add_argument('--error', default = False, type = bool, help = "calculate error and plot summary? requires known locations for all samples. True / False. default = False")
-#parser.add_argument('--legend_position', default = "bottom", help = "legend position for summary plots if --error is True. Options: 'bottom', 'right'. default = bottom")
-parser.add_argument('--map', default = True, type = str, help = "plot  basemap? default = True")
-#parser.add_argument('--haploid', default = False, type = bool, help = "set to TRUE if predictions are from locator_phased.py. Predictions will be plotted for each haploid chromosome separately. default: FALSE.")
-parser.add_argument('--centroid_method', default = 'kd', type = str, help = "Method for summarizing window/bootstrap predictions. Options 'gc' (take the centroid of window predictions with rgeos::gCentroid() ) or 'kd' (take the location of maximum density after kernal density estimation with mass::kde( )). default: kd")
-
-
-
+parser=argparse.ArgumentParser(description='Plot summary of a set of locator predictions.')
+parser.add_argument('--infile',help='path to folder with .predlocs files')
+parser.add_argument('--sample_data',help='path to sample_data file (should be WGS1984 x/y if map=True')
+parser.add_argument('--out',help='path to output (will be appended with _typeofplot.pdf')
+parser.add_argument('--width',default=10,type=float,help='width in inches of the output plot. default=5')
+parser.add_argument('--height',default=8,type=float,help='height in inches of the output plot. default=4')
+parser.add_argument('--samples',default=None,nargs='+',help='samples IDs to plot, separated by spaces. e.g. sample1 sample2 sample3. default=None')
+parser.add_argument('--nsamples',default=9,type=int,help='if no --samples argument is provided, --nsamples random samples will be plotted. default=9')
+parser.add_argument('--ncol',default=3,type=int,help='number of columns for multipanel plots (should evenly divide --nsamples, otherwise nsamples will supersede). default=3')
+parser.add_argument('--error',default=False,action='store_true',help='calculate error and plot summary? requires known locations for all samples. T/F. default=False')
+parser.add_argument('--basemap',default=False,action='store_true',help='plot basemap? default=False')
+parser.add_argument('--longlat',default=False,action='store_true',help='set to True if coordinates are x and y in decimal degrees to print error in kilometers. default=False')
+parser.add_argument('--silence',default=False,action='store_true',help='no terminal output. T/F. default=True')
+parser.add_argument('--training_samples',default=None,help='path to training metadata file for plotting training locations, if provided. default=None')
 args=parser.parse_args()
 
-infile = args.infile
-sample_data = args.sample_data
-out = args.out
-width = args.width
-error = args.error
-sample = args.sample
-usemap = args.map
-#haploid = args.haploid
-#legend_position = args.legend_position
-centroid_method = args.centroid_method
+if args.basemap:
+    mapp=zarr.open('map.zarr',mode='r')
 
-## KERNEL DENSITY
-
-def kdepred (xcoords, ycoords):
+def kdepred(xcoords,ycoords): # kernel density
     try:
-        coords = list(zip(xcoords, ycoords))
-        density = kd(kernel='gaussian', bandwidth=0.2).fit(coords) ## bandwidth
-        e = density.score_samples(coords)
-        max_index = int((np.argwhere(e == np.amax(e)).tolist())[0][0])
-        kd_x = xcoords[max_index]
-        kd_y = ycoords[max_index]
+        coords=list(zip(xcoords,ycoords))
+        density=KernelDensity(kernel='gaussian',bandwidth=0.2).fit(coords) # bandwidth
+        e=density.score_samples(coords)
+        max_index=int((np.argwhere(e==np.amax(e)).tolist())[0][0])
+        kd_x=xcoords[max_index]
+        kd_y=ycoords[max_index]
     except Exception:
-        kd_x = np.mean(xcoords)
-        kd_y = np.mean(ycoords)
-    return(kd_x, kd_y)
-    
-## CENTROID
+        kd_x=np.mean(xcoords)
+        kd_y=np.mean(ycoords)
+    return kd_x,kd_y
 
-def centroid(xcoords, ycoords):
-    arr = np.array(list(zip(xcoords, ycoords)))
-    length = arr.shape[0]
-    sum_x = np.sum(arr[:, 0])
-    sum_y = np.sum(arr[:, 1])
+def centroid(xcoords,ycoords): # geographic centroid
+    coords=np.array(list(zip(xcoords,ycoords)))
+    length=coords.shape[0]
+    sum_x=np.sum(coords[:,0])
+    sum_y=np.sum(coords[:,1])
     return sum_x/length, sum_y/length
 
-## CLOSEST FLOAT
+def distance_km(xpred,ypred,x,y): # distance in km if longlat==True
+    dlon=xpred-x
+    dlat=ypred-y
+    a=sin(dlat/2)**2+cos(y)*cos(ypred)*sin(dlon/2)**2
+    c=2*atan2(sqrt(a),sqrt(1-a))
+    return 6373.0*c
 
-def get_closest(floats, value):
-    difference = (np.abs(floats - value))
-    closest = difference.argmin()
-    return closest
-    
-## LOAD, COMPILE DATA
+def distance(xpred,ypred,x,y): # hypotenuse distance otherwise
+    xc=xpred-x
+    yc=ypred-y
+    return np.hypot(xc,yc)
 
-print('loading data')
-if 'predlocs.txt' in (x for x in os.listdir(infile)):
-    aeg = pd.DataFrame(infile)
+def get_closest(floats,value): # closest float
+    diff=(np.abs(floats-value))
+    return diff.argmin()
+
+# load data
+if not args.silence:
+    print('loading data')
+if 'predlocs.txt' in args.infile:
+    aeg=pd.DataFrame(infile)
 else:
-    files = [x for x in os.listdir(infile)]
-    files = [x for x in files if 'predlocs' in x]
-    path = infile + '/' + files[0]
-    aeg = pd.read_csv(path)
-    for f in files:
-        path = infile + '/' + f
-        a = pd.read_csv(path)
-        aeg = aeg.append(a, ignore_index = True)
+    files=[x for x in os.listdir(args.infile)]
+    files=[x for x in files if 'predlocs' in x]
+    aeg=pd.read_csv(args.infile+'/'+files[0])
+    for i in range(len(files[1:])):
+        a=pd.read_csv(args.infile+'/'+files[i])
+        aeg=aeg.append(a,ignore_index=True)
+aeg=aeg.reset_index(drop=True)
+aeg=aeg.rename(columns={'x':'xpred','y':'ypred'})
+locs=pd.read_csv(args.sample_data,sep='\t')
+aeg=pd.merge(aeg,locs,on='sampleID')
+samples=aeg.sampleID.unique()
+if args.samples:
+    samples=args.samples
+else:
+    samples=np.random.choice(samples,args.nsamples,replace=False)
 
-locs = pd.read_csv(sample_data, sep = '\t')
-aeg = pd.merge(aeg, locs, on='sampleID')
-aeg = aeg.rename(columns={'0': 'xpred', '1': 'ypred'})
-samples = aeg.sampleID.unique()
+# calculate error
+if args.error:
+    if not args.silence:
+        print('calculating error')
+    # get error for centroids and max kernel density locations
+    bp={}
+    kd_x=[]
+    kd_y=[]
+    gc_x=[]
+    gc_y=[]
+    loc_x=[]
+    loc_y=[]
+    kd_dists=[]
+    gc_dists=[]
+    ids=aeg.sampleID.unique()
+    for item in ids:
+        xcoords=aeg.loc[aeg['sampleID']==item]['xpred']
+        ycoords=aeg.loc[aeg['sampleID']==item]['ypred']
+    # actual location
+        x=aeg.loc[aeg['sampleID']==item]['x'].tolist()
+        y=aeg.loc[aeg['sampleID']==item]['y'].tolist()
+        loc_x.append(x[0])
+        loc_y.append(y[0])
+    # kd centroids
+        k=kdepred(xcoords,ycoords)
+        kd_x.append(k[0])
+        kd_y.append(k[1])
+        if args.longlat:
+            kd_dists.append(distance_km(k[0],k[1],x,y))
+        else:
+            kd_dists.append(distance(k[0],k[1],x,y))
+     # gc centroids
+        g=centroid(xcoords,ycoords)
+        gc_x.append(g[0])
+        gc_y.append(g[1])
+        if args.longlat:
+            gc_dists.append(distance_km(g[0],g[1],x,y))
+        else:
+            gc_dists.append(distance(g[0],g[1],x,y))
+    # save to tsv
+    bp.update({'sampleID':ids,'x':loc_x,'y':loc_y,'kd_x':kd_x,'kd_y':kd_y,'gc_x':gc_x,'gc_y':gc_y})
+    bp=pd.DataFrame(bp)
+    bp.to_csv(args.out+'_centroids.txt',index=False,sep='\t')
+    # print results
+    if not args.silence:
+        print('mean kernel peak error = ' + str(np.mean(kd_dists)))
+        print('median kernel peak error = ' + str(np.median(kd_dists)))
+        print('90% CI for kernel peak error = ' + str(np.quantile(kd_dists,0.05))+' '+str(np.quantile(kd_dists,0.95)))
+        print('mean centroid error = ' + str(np.mean(gc_dists)))
+        print('median centroid error = ' + str(np.median(gc_dists)))
+        print('90% CI for centroid error = ' + str(np.quantile(gc_dists,0.05))+' '+str(np.quantile(gc_dists,0.95)))
 
-## CALCULATE ERROR
+# plot
+if args.training_samples: # get training samples
+    training_samples=pd.read_csv(args.training_samples,sep='\t')
+    ts_x=(training_samples['x'][~np.isnan(training_samples['x'].to_numpy())])
+    ts_y=(training_samples['y'][~np.isnan(training_samples['y'].to_numpy())])
+    print(ts_x,ts_y)
+if not args.silence:
+    print('plotting')
+if args.samples:
+    s=len(args.samples)
+else:
+    s=args.nsamples
+r=s/args.ncol
+if r/r != 1: # if args.samples doesn't fit into args.columns, plot all samples provided and leave the rest empty
+    s=args.nsamples+(args.nsamples%args.ncol)
+    r=s/args.ncol
+r=int(r)
 
-if error != False:
-    print('calculating error')
-    ids = np.empty(len(samples), dtype = 'object')
-    if centroid_method == 'kd':
-        kd_x = np.empty(len(samples))
-        kd_y = np.empty(len(samples))
-        bp = {'sampleID': ids, 'kd_x': kd_x, 'kd_y': kd_y}
-        count = 0
-        for item in samples:
-            seriesObj = aeg.apply(lambda x: True if x['sampleID'] == item else False , axis=1)
-            xcoords = np.empty(len(seriesObj[seriesObj == True].index))
-            ycoords = np.empty(len(seriesObj[seriesObj == True].index))
-            ticker = 0
-            for index, row in (aeg.loc[aeg['sampleID'] == item]).iterrows():
-                xcoords[ticker] = row['xpred']
-                ycoords[ticker] = row['ypred']
-                ticker += 1
-            k = kdepred(xcoords, ycoords)
-            kd_x[count] = k[0]
-            kd_y[count] = k[1]
-            ids[count] = item
-            count += 1
-        bp.update({'sampleID': ids, 'kd_x': kd_x, 'kd_y': kd_y})
-        bp = pd.DataFrame(bp)
-        bp.to_csv((out + '_centroids.txt'), index = False, sep = '\t')
-        aeg = pd.merge(aeg, bp, on='sampleID')
-        plocs = list(zip(aeg['kd_x'], aeg['kd_y']))
-        tlocs = list(zip(aeg['x'], aeg['y']))
-        dists = []
-        R = 6373.0
-        for n in range(len(plocs)):
-            xpred = radians(plocs[n][0])
-            ypred = radians(plocs[n][1])
-            x = radians(tlocs[n][0])
-            y = radians(tlocs[n][1])
-            dlon = xpred - x
-            dlat = ypred - y
-            a = sin(dlat / 2)**2 + cos(y) * cos(ypred) * sin(dlon / 2)**2
-            c = 2 * atan2(sqrt(a), sqrt(1 - a))
-            dists.append(R * c)
-        aeg['dists'] = dists
-        print('mean centroid error = ', np.mean(dists))
-        print('median centroid error = ', np.median(dists))
-        print('90% CI for centroid error ', np.quantile(dists, 0.05), ' ', np.quantile(dists, 0.95))
-        
-    elif centroid_method == 'gc':
-        gc_x = np.empty(len(samples))
-        gc_y = np.empty(len(samples))
-        bp = {'sampleID': ids, 'gc_x': gc_x, 'gc_y': gc_y}
-        count = 0
-        for item in samples:
-            seriesObj = aeg.apply(lambda x: True if x['sampleID'] == item else False , axis=1)
-            xcoords = np.empty(len(seriesObj[seriesObj == True].index))
-            ycoords = np.empty(len(seriesObj[seriesObj == True].index))
-            ticker = 0
-            for index, row in (aeg.loc[aeg['sampleID'] == item]).iterrows():
-                xcoords[ticker] = row['xpred']
-                ycoords[ticker] = row['ypred']
-                ticker += 1
-            g = centroid(xcoords, ycoords)
-            gc_x[count] = g[0]
-            gc_y[count] = g[1]
-            ids[count] = item
-            count += 1
-        bp.update({'sampleID': ids, 'gc_x': gc_x, 'gc_y': gc_y})
-        bp = pd.DataFrame(bp)
-        bp.to_csv((out + '_centroids.txt'), index = False, sep = '\t')
-        aeg = pd.merge(aeg, bp, on='sampleID')
-        plocs = list(zip(aeg['gc_x'], aeg['gc_y']))
-        tlocs = list(zip(aeg['x'], aeg['y']))
-        dists = []
-        R = 6373.0
-        for n in range(len(plocs)):
-            xpred = radians(plocs[n][0])
-            ypred = radians(plocs[n][1])
-            x = radians(tlocs[n][0])
-            y = radians(tlocs[n][1])
-            dlon = xpred - x
-            dlat = ypred - y
-            a = sin(dlat / 2)**2 + cos(y) * cos(ypred) * sin(dlon / 2)**2
-            c = 2 * atan2(sqrt(a), sqrt(1 - a))
-            dists.append(R * c)
-        aeg['dists'] = dists
-        print('mean centroid error = ', np.mean(dists))
-        print('median centroid error = ', np.median(dists))
-        print('90% CI for centroid error ', np.quantile(dists, 0.05), ' ', np.quantile(dists, 0.95))
+ax_ratio=(args.width/args.ncol)/(args.height/r)
+fig,axes=plt.subplots(nrows=r,ncols=args.ncol)
 
-## PLOT
-
-mapp = zarr.open('map.zarr', mode = 'r')
-def plot(sample, locs):
-    print("plotting")
-    print(sample)
-    
-    data = (aeg[aeg['sampleID'].str.contains(sample)]).reset_index(drop = True)
-
-    kde = KernelDensity(bandwidth=0.04, metric='haversine', kernel='gaussian', algorithm='ball_tree')
-    Xtrain = np.vstack([data.ypred, data.xpred]).T
-    Xtrain = np.radians(Xtrain)
-
-    xgrid = np.linspace(min(data.xpred) - 10, max(data.xpred) + 10, (int((max(data.xpred) - min(data.xpred))) * 10))
-    ygrid = np.linspace(min(data.ypred) - 10, max(data.ypred) + 10, (int((max(data.ypred) - min(data.ypred))) * 10))
-    Xgrid, Ygrid = np.meshgrid(xgrid, ygrid)
-
+count=0
+for ax in axes.flatten():
+    sample=samples[count]
+    count+=1
+    # kernel density
+    data=(aeg[aeg['sampleID'].str.contains(sample)]).reset_index(drop=True)
+    kde=KernelDensity(bandwidth=0.04,metric='haversine',kernel='gaussian',algorithm='ball_tree')
+    Xtrain=np.vstack([data.ypred,data.xpred]).T
+    Xtrain=np.radians(Xtrain)
+    xgrid=np.linspace(min(data.xpred)-10,max(data.xpred)+10,(int((max(data.xpred)-min(data.xpred)))*10))
+    ygrid=np.linspace(min(data.ypred)-10,max(data.ypred)+10,(int((max(data.ypred)-min(data.ypred)))*10))
+    Xgrid,Ygrid=np.meshgrid(xgrid,ygrid)
     kde.fit(Xtrain)
-
-    xy = np.vstack([Ygrid.ravel(), Xgrid.ravel()]).T
-    xy = np.radians(xy)
-
-    Z = np.exp(kde.score_samples(xy))
-
-    zed = np.sort(Z)
-    c1 = np.cumsum(zed)
-    y_interp = scipy.interpolate.interp1d(c1, zed)
-
-    ex = np.linspace(min(zed), max(zed), len(np.ndarray.flatten(Xgrid + Ygrid)))
-    why = y_interp(zed)
-    vals = list(zip(ex, why))
-    quants = np.quantile(why, [.05, .5, .9])
-
-    levels = []
-
+    xy=np.vstack([Ygrid.ravel(),Xgrid.ravel()]).T
+    xy=np.radians(xy)
+    Z=np.exp(kde.score_samples(xy))
+    zed=np.sort(Z)
+    c1=np.cumsum(zed)
+    y_interp=sp.interpolate.interp1d(c1,zed)
+    ex=np.linspace(min(zed),max(zed),len(np.ndarray.flatten(Xgrid+Ygrid)))
+    why=y_interp(zed)
+    vals=list(zip(ex,why))
+    quants=np.quantile(why,[.05,.5,.9])
+    levels=[]
     for q in quants:
-        close = get_closest(why, q)
-        levels.append(vals[close][0])
-    
-    Z = Z.reshape(Xgrid.shape)   
-
-    fig,ax=plt.subplots()
-    colors = ['#000000', '#1e90ff', '#ff0000']
-    texts = ['Predicted locations', 'Training locations', 'Actual location']
-    patches = [ plt.plot([],[], marker="o", ms=10, ls="", mec=None, color=colors[i], 
-    label="{:s}".format(texts[i]) )[0]  for i in range(len(texts)) ]
-    legend = plt.legend(handles=patches, loc='lower center', bbox_to_anchor=(0.5, -0.3), ncol=3, facecolor="w", edgecolor = None, numpoints=1 )
-    ax.set_aspect('equal')
-    ax.set_xlim((min(data.xpred) - 10), (max(data.xpred)+10))
-    ax.set_ylim((min(data.ypred) - 10), (max(data.ypred)+10))
+        close=get_closest(why,q)
+        if vals[close][0] not in levels:
+            levels.append(vals[close][0])
+    Z=Z.reshape(Xgrid.shape)
+    # plot params
+    if ((max(data.xpred)+10)-(min(data.xpred)-10))>((max(data.ypred)+10)-(min(data.ypred)-10)):
+        xmin,xmax=min(data.xpred)-10,max(data.xpred)+10
+        ax.set_xlim(xmin,xmax)
+        width=(max(data.xpred)+10)-(min(data.xpred)-10)
+        height=width/ax_ratio
+        center=np.mean([max(data.ypred)+10,min(data.ypred)-10])
+        ymin,ymax=center-(height/2),center+height/2
+        ax.set_ylim(ymin,ymax)
+        ax.set_aspect('equal')
+    elif ((max(data.ypred)+10)-(min(data.ypred)-10))>((max(data.xpred)+10)-(min(data.xpred)-10)):
+        ymin,ymax=min(data.ypred)-10,max(data.ypred)+10
+        ax.set_ylim(ymin,ymax)
+        height=(max(data.ypred)+10)-(min(data.ypred)-10)
+        width=ax_ratio*height
+        center=np.mean([max(data.xpred)+10,min(data.xpred)-10])
+        xmin,xmax=center-(width/2),center+(width/2)
+        ax.set_xlim(xmin,xmax)
+        ax.set_aspect('equal')
     ax.patch.set_facecolor('#ffffff')
-    if usemap == True:
-        itm = []
+    # plot map
+    plot_ax=ax.inset_axes([0,0,1,1])
+    plot_ax.set_xlim(xmin,xmax)
+    plot_ax.set_ylim(ymin,ymax)
+    if args.basemap:
+        itm=[]
         for group in mapp:
-            if group == 'Mozambique':
-                for item in mapp[group]:
-                    if item == 'Mozambique_2':
-                        itm.append((mapp[group][item][0], mapp[group][item][1]))
-                ax.plot(itm[0][0][0:(len(itm[0][0]) - 11)], itm[0][1][0:(len(itm[0][1]) - 11)], '#ffffff', lw = .15)
-                ax.fill(itm[0][0][0:(len(itm[0][0]) - 11)], itm[0][1][0:(len(itm[0][1]) - 11)], '#b0b0b0')
-            elif group != 'Mozambique':
-                for item in mapp[group]:
-                    x = mapp[group][item][0]
-                    y = mapp[group][item][1]
-                    ax.plot(x, y, '#ffffff', lw = .15)
-                    ax.fill(x, y, '#b0b0b0')
-    ax1 = fig.add_subplot()
-    ax1.set_xlim((min(data.xpred) - 10), (max(data.xpred)+10))
-    ax1.set_ylim((min(data.ypred) - 10), (max(data.ypred)+10))
-    ax1.set_aspect('equal')
-    contour = ax1.contour(Xgrid, Ygrid, Z, levels = levels, colors = 'k')
-
-    fmt = {}
-    strs = ['0.95', '0.5', '0.1']
-    for l, s in zip(contour.levels, strs):
-        fmt[l] = s
-
-
-    ax1.clabel(contour, contour.levels, inline=True, fmt=fmt, fontsize=10)
-    ax1.scatter(data.xpred, data.ypred, s = 1, color = '#000000')
-    ax1.scatter(locs.x, locs.y, s = 10, color = '#1e90ff') 
-    ax1.scatter(data.x[0], data.y[0], s = 40, color = '#FF0000')
-    ax1.patch.set_alpha(0)
-    title = fig.suptitle(sample, fontweight = 'bold')
-    plt.savefig(out + '_plot_map.png', bbox_extra_artists = (title, legend), bbox_inches = 'tight')
-    
-if sample == None:
-    sample = samples[np.random.randint(len(samples))]
-    plot(sample, locs)
-elif sample != None:
-    sample = sample
-    plot(sample, locs)
+            for item in mapp[group]:
+                if any(xmin<xcoord<xmax for xcoord in mapp[group][item][0]) or any(ymin<ycoord<ymax for ycoord in mapp[group][item][1]):
+                    ax.plot(mapp[group][item][0],mapp[group][item][1],'#ffffff',lw=.15)
+                    ax.fill(mapp[group][item][0],mapp[group][item][1],'#b0b0b0')
+    [s.set_visible(False) for s in ax.spines.values()]
+    ax.get_xaxis().set_visible(False)
+    ax.get_yaxis().set_visible(False)
+    # plot locs
+    contour=plot_ax.contour(Xgrid,Ygrid,Z,levels=levels,colors='k')
+    fmt={}
+    strs=['0.95', '0.5', '0.1']
+    for l,s in zip(contour.levels,strs):
+        fmt[l]=s
+    plot_ax.clabel(contour,contour.levels,inline=True,fmt=fmt,fontsize='small')
+    plot_ax.scatter(data.xpred,data.ypred,s=1,color='#000000',label='Predicted Locations')
+    plot_ax.scatter(data.x[0],data.y[0],s=40,color='#FF0000',label='Sample Location')
+    if args.training_samples:
+        plot_ax.scatter(ts_x,ts_y,s=10,color='#1e90ff',label='Training Locations')
+    plot_ax.patch.set_alpha(0)
+    plot_ax.set_title(sample,fontsize='small')
+    handles,labels=plot_ax.get_legend_handles_labels()
+loc='lower center'
+col=len(handles)
+lgt=fig.legend(handles,labels,loc=loc,ncol=col,fontsize='small')
+fig.set_size_inches(args.width,args.height)
+plt.savefig(args.out+'.pdf',format='pdf',bbox_inches='tight')
