@@ -3,10 +3,10 @@ genotype or sequencing data. A manuscript describing it and its use can be found
 
 # Installation 
 
-The easiest way to install `locator` is to download the github repo and run the setup script. It's usually a good idea to do this in a new conda environment (https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) to avoid version conflicts with other software: 
+The easiest way to install `locator` is to download the github repo and run the setup script. We recommend you do this in a new conda environment (https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) to avoid version conflicts with other software: 
 
 ```
-conda create --name locator
+conda create --name locator python=3.8
 conda activate locator
 git clone https://github.com/kr-colab/locator.git
 cd locator
