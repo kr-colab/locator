@@ -1,0 +1,11 @@
+numpy
+tensorflow
+h5py
+scikit-allel
+matplotlib
+scipy
+tqdm
+pandas
+zarr
+seaborn
+
