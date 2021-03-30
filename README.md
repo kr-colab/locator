@@ -15,19 +15,7 @@ You can also clone the github repo and run the setup script:
 ```
 git clone https://github.com/kr-colab/locator.git
 cd locator
-python setup.py install
-```
-
-Users without admin access may be able to install to their user account with:
-```
-python -m pip install --user git+https://github.com/kr-colab/locator
-```
-
-The `setup.py` script should deal with dependencies for you, however
-if you run in to trouble the main method requires python3, gnuplot, and the following packages:
-```
-allel, re, os, keras, matplotlib, sys, zarr, time, subprocess, copy
-numpy, pandas, tensorflow (v2+), scipy (1.4.1), tqdm, argparse, gnuplotlib
+pip install -r req.txt
 ```
 
 We recommend running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
