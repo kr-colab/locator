@@ -143,7 +143,7 @@ The first command will train five separate `locator` models and generate predict
 # Diagnosing Failures
 We recommend all users read the paper (https://elifesciences.org/articles/54507) before using Locator to get an idea of when and how it can fail. In general, location prediction works better in populations with less dispersal and datasets with more SNPs. When run on populations with too much dispersal or too little data, Locator tends to predict the middle of the distribution of training points. This behavior can also occur when a species is strongly structured in only one direction -- for example, if there is a strong north-south cline in allele frequencies but no east-west variation, Locator will typically generate accurate latitude predictions but will guess the middle of the longitudinal range of training points. 
 
-The best way to diagnose these failures is to note the <img src="https://latex.codecogs.com/gif.latex?R^2"/> values printed to screen at the end of each Locator training run: 
+The best way to diagnose these failures is to note the validation performance statistics printed to screen at the end of each Locator training run: 
 ```
 predicting locations...
 R2(x)=0.9484760204379148
@@ -153,7 +153,7 @@ median validation error 3.3019781150072984
 
 run time 0.6170202493667603 minutes
 ```
-These values describe the correlation between predicted and true locations in each dimension for the set of validation samples used during model training. If one or both of these numbers is low, expect predictions on that dimension to collapse towards the mean. In our tests, error on the test set is typically very similar to that on the validation set, so the validation errors printed here should also give you a rough estimate of how far off predictions should be in your dataset. 
+These values describe the correlation between predicted and true locations in each dimension for the set of validation samples used during model training. If one or both of the R^2 numbers is low, expect predictions on that dimension to collapse towards the mean. In our tests, error on the test set is typically very similar to that on the validation set, so the validation errors printed here should also give you a rough estimate of how far off predictions should be in your dataset. 
 
 
 # License
