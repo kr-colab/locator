@@ -7,6 +7,9 @@ from matplotlib import pyplot as plt
 import argparse
 import json
 from tensorflow.keras import backend as K
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.neighbors import KernelDensity
+from sklearn.model_selection import GridSearchCV
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
@@ -91,6 +94,16 @@ parser.add_argument('--keras_verbose',default=1,type=int,
                     0 = silent. 1 = progress bars for minibatches. 2 = show epochs. \
                     Yes, 1 is more verbose than 2. Blame keras. \
                     default: 1. ')
+parser.add_argument('--weight_samples',choices=[None, 'tsv', 'histogram', 'kernel density'],default=None,
+                    help='Weight samples according to spatial density?')
+parser.add_argument('--sample_weights',default=None,
+                    help='path to TSV of sample weights to use during training. \
+                         columns = ["sampleID", "sample_weight"]')
+parser.add_argument('--bins', default=None, nargs=2, type=int,
+                    help='number of bins to use for histogram weight calculations. first argument is x bin count, second is y bin count')
+parser.add_argument('--lam', default=1, type=float, help='factor to scale kernel density weights by')
+parser.add_argument('--bandwidth', default=None, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV')
+
 args=parser.parse_args()
 
 #set seed and gpu
@@ -163,6 +176,54 @@ def sort_samples(samples):
     print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
     return(sample_data,locs)
 
+def make_kd_weights(trainlocs, lam, bandwidth):
+    if bandwidth:
+        bw = bandwidth
+    else:
+    # use gridsearch to ID best bandwidth size
+        bandwidths = np.linspace(0.1, 10, 1000)
+        grid = GridSearchCV(KernelDensity(kernel='gaussian'), {'bandwidth':bandwidths})
+        grid.fit(trainlocs)
+        bw = grid.best_params_['bandwidth']
+    
+    # fit kernel
+    kde = KernelDensity(bandwidth=bw, kernel='gaussian')
+    kde.fit(trainlocs)
+
+    # calculate weights
+    weights = kde.score_samples(trainlocs)
+    weights = 1.0 / np.exp(weights)
+    weights *= lam
+    weights /= min(weights)
+
+    return weights
+
+def make_histogram_weights(trainlocs, bins):
+    if bins:
+        bincount = bins
+    else:
+        bincount = [10, 10] # default Numpy behavior
+
+    # make 2D histogram
+    H, xedges, yedges = np.histogram2d(trainlocs[:,0], trainlocs[:, 1], bins=bincount)
+    # sort trainlocs into bins
+    xbin = np.digitize(trainlocs[:, 0], xedges[1:], right=True)
+    ybin = np.digitize(trainlocs[:, 1], yedges[1:], right=True)
+
+    # assign sample weights
+    weights = np.empty(len(trainlocs), dtype='float')
+    for i in range(len(trainlocs)):
+        weights[i] = 1/(H[xbin[i]][ybin[i]])
+    weights /= min(weights)
+
+    return weights
+
+def load_sample_weights(weightpath, trainsamps):
+    weightdf = pd.read_csv(weightpath, sep='\t')
+    weightdf.set_index('sampleID')
+    weights = weightdf.loc[trainsamps, 'sample_weight']
+
+    return weights
 
 #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes):
@@ -266,10 +327,11 @@ def load_callbacks(boot):
                                                min_lr=0)
     return checkpointer,earlystop,reducelr
 
-def train_network(model,traingen,testgen,trainlocs,testlocs):
+def train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights):
     history = model.fit(traingen, trainlocs,
                         epochs=args.max_epochs,
                         batch_size=args.batch_size,
+                        sample_weight=sample_weights,
                         shuffle=True,
                         verbose=args.keras_verbose,
                         validation_data=(testgen,testlocs),
@@ -340,9 +402,18 @@ def plot_history(history,dists,gnuplot):
 ### windows ###
 if args.windows:
     callset = zarr.open_group(args.zarr, mode='r')
-    gt = callset['calldata/GT']
-    samples = callset['samples'][:]
+    gt = allel.GenotypeDaskArray(callset['calldata/GT'])
+    samples = callset['samples'][:].astype('str')
     positions = np.array(callset['variants/POS'])
+    
+    # cut down genotypes to only the included samples
+    metadata = pd.read_csv(args.sample_data, sep='\t')
+    samples_list = list(samples)
+    samples_callset_index = [samples_list.index(s) for s in metadata['sampleID']]
+    samples = np.array([samples[s] for s in samples_callset_index])
+    metadata['callset_index'] = samples_callset_index
+    indexes = metadata.callset_index.values.sort()
+
     start=int(args.window_start)
     if args.window_stop==None:
         stop=np.max(positions)
@@ -354,15 +425,28 @@ if args.windows:
         a=np.min(np.argwhere(mask))
         b=np.max(np.argwhere(mask))
         print(a,b)
-        genotypes=allel.GenotypeArray(gt[a:b,:,:])
+        genotypes=allel.GenotypeArray(gt[a:b])
+        genotypes=genotypes.take(samples_callset_index, axis=1)
         sample_data,locs=sort_samples(samples)
+        unnormedlocs=locs # save un-normalized locs for sample weighting
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+        
+        if args.weight_samples:
+            if args.weight_samples == 'tsv':
+                sample_weights = load_sample_weights(args.sample_weights, samples[train])
+            elif args.weight_samples == 'histogram':
+                sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
+            elif args.weight_samples == 'kernel_density':
+                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+        else:
+            sample_weights = None
+
         model=load_network(traingen,args.dropout_prop)
         t1=time.time()
-        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+        history,model=train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
         plot_history(history,dists,args.gnuplot)
         if not args.keep_weights:
