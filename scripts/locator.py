@@ -442,8 +442,8 @@ if args.windows:
             elif args.weight_samples == 'kernel_density':
                 sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
 
-        wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
-        wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+            wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+            wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
 
         else:
             sample_weights = None
