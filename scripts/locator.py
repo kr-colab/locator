@@ -220,7 +220,7 @@ def make_histogram_weights(trainlocs, bins):
 
 def load_sample_weights(weightpath, trainsamps):
     weightdf = pd.read_csv(weightpath, sep='\t')
-    weightdf.set_index('sampleID')
+    weightdf.set_index('sampleID', inplace=True)
     weights = weightdf.loc[trainsamps, 'sample_weight']
 
     return weights
@@ -441,6 +441,10 @@ if args.windows:
                 sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
             elif args.weight_samples == 'kernel_density':
                 sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+
+        wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+        wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+
         else:
             sample_weights = None
 
