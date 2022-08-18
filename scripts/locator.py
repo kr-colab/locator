@@ -193,8 +193,8 @@ def make_kd_weights(trainlocs, lam, bandwidth):
     # calculate weights
     weights = kde.score_samples(trainlocs)
     weights = 1.0 / np.exp(weights)
-    weights *= lam
     weights /= min(weights)
+    weights = weights**lam
 
     return weights
 
