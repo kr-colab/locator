@@ -101,7 +101,7 @@ parser.add_argument('--weight_samples',choices=[None, 'tsv', 'histogram', 'kerne
                             "tsv" = manually assign sample weights. must provide --sample_weights argument. \
                             "histogram" = calculate weights using a 2D histogram. optional: \
                                 provide --bins argument to define number of x and y bins used. \
-                            "kernel density" = calculate weights using a gaussian kernel. optional:
+                            "kernel density" = calculate weights using a gaussian kernel. optional: \
                                 provide --bandwidth argument to define KDE bandwidth, \
                                         --lam argument to scale assigned weights.')
 parser.add_argument('--sample_weights',default=None,
@@ -182,8 +182,9 @@ def sort_samples(samples):
     samples = samples.astype('str')
     sample_data=sample_data.reindex(np.array(samples)) #sort loc table so samples are in same order as vcf samples
     if not all([sample_data['sampleID2'][x]==samples[x] for x in range(len(samples))]): #check that all sample names are present
-        print("sample ordering failed! Check that sample IDs match the VCF.")
-        sys.exit()
+        print("WARNING: not all genotype samples are present in the metadata.\n \
+                running on samples with available metadata...")
+        sample_data = sample_data.loc[~pd.isna(sample_data.sampleID2)]
     locs=np.array(sample_data[["x","y"]])
     print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
     return(sample_data,locs)
@@ -459,21 +460,23 @@ if args.windows:
         if args.weight_samples:
             if args.weight_samples == 'tsv':
                 sample_weights = load_sample_weights(args.sample_weights, samples[train])
-
             elif args.weight_samples == 'histogram':
                 sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
-                wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
                 wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
 
             elif args.weight_samples == 'kernel density':
                 sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
-                wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
                 wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
-
-
         else:
             sample_weights = None
-
         model=load_network(traingen,args.dropout_prop)
         t1=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights)
@@ -489,13 +492,33 @@ else:
         boot=None
         genotypes,samples=load_genotypes()
         sample_data,locs=sort_samples(samples)
+        unnormedlocs=locs # save un-normalized locs for sample weighting
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+        if args.weight_samples:
+            if args.weight_samples == 'tsv':
+                sample_weights = load_sample_weights(args.sample_weights, samples[train])
+            elif args.weight_samples == 'histogram':
+                sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+            elif args.weight_samples == 'kernel density':
+                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+        else:
+            sample_weights = None
         model=load_network(traingen,args.dropout_prop)
         start=time.time()
-        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+        history,model=train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
         plot_history(history,dists,args.gnuplot)
         if not args.keep_weights:
@@ -507,13 +530,33 @@ else:
         boot="FULL"
         genotypes,samples=load_genotypes()
         sample_data,locs=sort_samples(samples)
+        unnormedlocs=locs
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+        if args.weight_samples:
+            if args.weight_samples == 'tsv':
+                sample_weights = load_sample_weights(args.sample_weights, samples[train])
+            elif args.weight_samples == 'histogram':
+                sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+            elif args.weight_samples == 'kernel density':
+                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+        else:
+            sample_weights = None
         model=load_network(traingen,args.dropout_prop)
         start=time.time()
-        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+        history,model=train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
         plot_history(history,dists,args.gnuplot)
         if not args.keep_weights:
@@ -534,7 +577,7 @@ else:
             predgen2=predgen2[:,site_order]
             model=load_network(traingen2,args.dropout_prop)
             start=time.time()
-            history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs)
+            history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs,sample_weights)
             dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen2)
             plot_history(history,dists,args.gnuplot)
             if not args.keep_weights:
@@ -548,12 +591,32 @@ else:
         genotypes,samples=load_genotypes()
         sample_data,locs=sort_samples(samples)
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
+        unnormedlocs=locs
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks(boot)
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
+        if args.weight_samples:
+            if args.weight_samples == 'tsv':
+                sample_weights = load_sample_weights(args.sample_weights, samples[train])
+            elif args.weight_samples == 'histogram':
+                sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+            elif args.weight_samples == 'kernel density':
+                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+                wdf = pd.DataFrame({'sampleID':samples[train], 
+                                    'sample_weight':sample_weights, 
+                                    'x':unnormedlocs[train][:,0], 
+                                    'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+        else:
+            sample_weights = None       
         model=load_network(traingen,args.dropout_prop)
         start=time.time()
-        history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
+        history,model=train_network(model,traingen,testgen,trainlocs,testlocs,sample_weights)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
         plot_history(history,dists,args.gnuplot)
         end=time.time()
