@@ -102,13 +102,16 @@ parser.add_argument('--sample_weights',default=None,
 parser.add_argument('--bins', default=None, nargs=2, type=int,
                     help='number of bins to use for histogram weight calculations. first argument is x bin count, second is y bin count')
 parser.add_argument('--lam', default=1, type=float, help='factor to scale kernel density weights by')
-parser.add_argument('--bandwidth', default=None, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV')
+parser.add_argument('--bandwidth', default=None, type=float, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV')
+parser.add_argument('--tfseed', default=None, type=int)
 
 args=parser.parse_args()
 
 #set seed and gpu
 if args.seed is not None:
     np.random.seed(args.seed)
+if args.tfseed is not None:
+    tf.random.set_seed(args.tfseed)
 if args.gpu_number is not None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
 
@@ -194,7 +197,10 @@ def make_kd_weights(trainlocs, lam, bandwidth):
     weights = kde.score_samples(trainlocs)
     weights = 1.0 / np.exp(weights)
     weights /= min(weights)
-    weights = weights**lam
+
+    weights = np.power(weights, lam)
+
+    weights /= sum(weights)
 
     return weights
 
@@ -219,11 +225,33 @@ def make_histogram_weights(trainlocs, bins):
     return weights
 
 def load_sample_weights(weightpath, trainsamps):
+ 
     weightdf = pd.read_csv(weightpath, sep='\t')
     weightdf.set_index('sampleID', inplace=True)
-    weights = weightdf.loc[trainsamps, 'sample_weight']
+    
+    weights = np.empty(len(trainsamps), dtype='float')
+    for i in range(len(trainsamps)):
+        w = weightdf.loc[trainsamps[i], 'sample_weight']
+        if type(w) == pd.core.series.Series:
+            weights[i] = w[0]
+        else:
+            weights[i] = w 
 
-    return weights
+        #print(type(w), w)
+        #if type(w) == 'numpy.float64':
+        #    weights[i] = w
+        #else:
+        #    print(w)
+        #    weights[i] = w.iloc[0]['sample_weight']
+
+    #weights = [weightdf.loc[t, 'sample_weight'] for t in trainsamps]
+
+    #print(weightdf.loc[trainsamps[0], 'sample_weight'])
+    #weights = weightdf.loc[trainsamps, 'sample_weight']
+
+    print(weights)
+
+    return np.array(weights)
 
 #replace missing sites with binomial(2,mean_allele_frequency)
 def replace_md(genotypes):
@@ -433,17 +461,27 @@ if args.windows:
         ac=filter_snps(genotypes)
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
-        
+
+        print(len(train))
+        print(len(samples[train]))
+        print(len(np.unique(samples[train])))
+
         if args.weight_samples:
             if args.weight_samples == 'tsv':
                 sample_weights = load_sample_weights(args.sample_weights, samples[train])
+                print(len(sample_weights))                
+
+
             elif args.weight_samples == 'histogram':
                 sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
-            elif args.weight_samples == 'kernel_density':
-                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+                wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
 
-            wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
-            wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+            elif args.weight_samples == 'kernel density':
+                sample_weights = make_kd_weights(unnormedlocs[train], args.lam, args.bandwidth)
+                wdf = pd.DataFrame({'sampleID':samples[train], 'sample_weight':sample_weights, 'x':unnormedlocs[train][:,0], 'y':unnormedlocs[train][:,1]})
+                wdf.to_csv(args.out+'_sample_weights.txt', sep='\t')
+
 
         else:
             sample_weights = None
