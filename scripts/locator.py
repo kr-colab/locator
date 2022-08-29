@@ -75,6 +75,8 @@ parser.add_argument("--width",default=256,type=int,
 parser.add_argument("--out",help="file name stem for output")
 parser.add_argument("--seed",default=None,type=int,
                     help="random seed for train/test splits and SNP subsetting.")
+parser.add_argument('--tfseed', default=None, type=int,
+                    help='random seed for TensorFlow initialization.')
 parser.add_argument("--gpu_number",default=None,type=str)
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
@@ -95,15 +97,22 @@ parser.add_argument('--keras_verbose',default=1,type=int,
                     Yes, 1 is more verbose than 2. Blame keras. \
                     default: 1. ')
 parser.add_argument('--weight_samples',choices=[None, 'tsv', 'histogram', 'kernel density'],default=None,
-                    help='Weight samples according to spatial density?')
+                    help='Weight samples according to spatial density? \
+                            "tsv" = manually assign sample weights. must provide --sample_weights argument. \
+                            "histogram" = calculate weights using a 2D histogram. optional: \
+                                provide --bins argument to define number of x and y bins used. \
+                            "kernel density" = calculate weights using a gaussian kernel. optional:
+                                provide --bandwidth argument to define KDE bandwidth, \
+                                        --lam argument to scale assigned weights.')
 parser.add_argument('--sample_weights',default=None,
                     help='path to TSV of sample weights to use during training. \
                          columns = ["sampleID", "sample_weight"]')
 parser.add_argument('--bins', default=None, nargs=2, type=int,
-                    help='number of bins to use for histogram weight calculations. first argument is x bin count, second is y bin count')
-parser.add_argument('--lam', default=1, type=float, help='factor to scale kernel density weights by')
-parser.add_argument('--bandwidth', default=None, type=float, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV')
-parser.add_argument('--tfseed', default=None, type=int)
+                    help='number of bins to use for histogram weight calculations. \
+                            first argument is x bin count, second is y bin count')
+parser.add_argument('--lam', default=1, type=float, help='factor to scale kernel density weights by:\
+                    sample_weights = sample_weights ^ lam.')
+parser.add_argument('--bandwidth', default=None, type=float, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV.')
 
 args=parser.parse_args()
 
@@ -236,21 +245,6 @@ def load_sample_weights(weightpath, trainsamps):
             weights[i] = w[0]
         else:
             weights[i] = w 
-
-        #print(type(w), w)
-        #if type(w) == 'numpy.float64':
-        #    weights[i] = w
-        #else:
-        #    print(w)
-        #    weights[i] = w.iloc[0]['sample_weight']
-
-    #weights = [weightdf.loc[t, 'sample_weight'] for t in trainsamps]
-
-    #print(weightdf.loc[trainsamps[0], 'sample_weight'])
-    #weights = weightdf.loc[trainsamps, 'sample_weight']
-
-    print(weights)
-
     return np.array(weights)
 
 #replace missing sites with binomial(2,mean_allele_frequency)
@@ -462,15 +456,9 @@ if args.windows:
         checkpointer,earlystop,reducelr=load_callbacks("FULL")
         train,test,traingen,testgen,trainlocs,testlocs,pred,predgen=split_train_test(ac,locs)
 
-        print(len(train))
-        print(len(samples[train]))
-        print(len(np.unique(samples[train])))
-
         if args.weight_samples:
             if args.weight_samples == 'tsv':
                 sample_weights = load_sample_weights(args.sample_weights, samples[train])
-                print(len(sample_weights))                
-
 
             elif args.weight_samples == 'histogram':
                 sample_weights = make_histogram_weights(unnormedlocs[train], args.bins)
