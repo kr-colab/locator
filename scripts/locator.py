@@ -431,6 +431,7 @@ if args.windows:
     
     # cut down genotypes to only the included samples
     metadata = pd.read_csv(args.sample_data, sep='\t')
+    metadata = metadata.astype({'sampleID':str})
     samples_list = list(samples)
     samples_callset_index = [samples_list.index(s) for s in metadata['sampleID']]
     samples = np.array([samples[s] for s in samples_callset_index])
