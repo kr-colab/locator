@@ -241,7 +241,7 @@ def load_callbacks(boot):
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
-                      save_freq=1)
+                      save_freq='epoch')
     else:
         checkpointer=tf.keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_weights.hdf5",
@@ -249,7 +249,7 @@ def load_callbacks(boot):
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
-                      save_freq=1)
+                      save_freq='epoch')
     earlystop=tf.keras.callbacks.EarlyStopping(monitor="val_loss",
                                             min_delta=0,
                                             patience=args.patience)
