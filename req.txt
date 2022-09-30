@@ -1,5 +1,5 @@
-numpy
-tensorflow
+numpy==1.19.2
+tensorflow==2.4.1
 h5py
 scikit-allel
 matplotlib
