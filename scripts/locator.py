@@ -76,9 +76,6 @@ parser.add_argument("--gpu_number",default=None,type=str)
 parser.add_argument('--plot_history',default=True,type=bool,
                     help="plot training history? \
                     default: True")
-parser.add_argument('--gnuplot',default=False,action="store_true",
-                    help="print acii plot of training history to stdout? \
-                    default: False")
 parser.add_argument('--keep_weights',default=False,action="store_true",
                     help='keep model weights after training? \
                     default: False.')
@@ -244,7 +241,7 @@ def load_callbacks(boot):
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
-                      period=1)
+                      save_freq=1)
     else:
         checkpointer=tf.keras.callbacks.ModelCheckpoint(
                       filepath=args.out+"_weights.hdf5",
@@ -252,7 +249,7 @@ def load_callbacks(boot):
                       save_best_only=True,
                       save_weights_only=True,
                       monitor="val_loss",
-                      period=1)
+                      save_freq=1)
     earlystop=tf.keras.callbacks.EarlyStopping(monitor="val_loss",
                                             min_delta=0,
                                             patience=args.patience)
@@ -312,7 +309,7 @@ def predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,sampl
     hist.to_csv(args.out+"_history.txt",sep="\t",index=False)
     return(dists)
 
-def plot_history(history,dists,gnuplot):
+def plot_history(history):
     if args.plot_history:
         plt.switch_backend('agg')
         fig = plt.figure(figsize=(4,1.5),dpi=200)
@@ -324,17 +321,6 @@ def plot_history(history,dists,gnuplot):
         ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
         ax2.set_xlabel("Training Loss")
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
-        if gnuplot:
-            gp.plot(np.array(history.history['val_loss'][3:]),
-                    unset='grid',
-                    terminal='dumb 60 20',
-                    #set= 'logscale y',
-                    title='Validation Loss by Epoch')
-            gp.plot((np.array(dists),
-                     dict(histogram = 'freq',binwidth=np.std(dists)/5)),
-                    unset='grid',
-                    terminal='dumb 60 20',
-                    title='Test Error')
 
 
 ### windows ###
@@ -364,7 +350,7 @@ if args.windows:
         t1=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
-        plot_history(history,dists,args.gnuplot)
+        plot_history(history)
         if not args.keep_weights:
             subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
         t2=time.time()
@@ -383,7 +369,7 @@ else:
         start=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
-        plot_history(history,dists,args.gnuplot)
+        plot_history(history)
         if not args.keep_weights:
             subprocess.run("rm "+args.out+"_weights.hdf5",shell=True)
         end=time.time()
@@ -401,7 +387,7 @@ else:
         start=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
-        plot_history(history,dists,args.gnuplot)
+        plot_history(history)
         if not args.keep_weights:
             subprocess.run("rm "+args.out+"_bootFULL_weights.hdf5",shell=True)
         end=time.time()
@@ -422,7 +408,7 @@ else:
             start=time.time()
             history,model=train_network(model,traingen2,testgen2,trainlocs,testlocs)
             dists=predict_locs(model,predgen2,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen2)
-            plot_history(history,dists,args.gnuplot)
+            plot_history(history)
             if not args.keep_weights:
                 subprocess.run("rm "+args.out+"_boot"+str(boot)+"_weights.hdf5",shell=True)
             end=time.time()
@@ -441,7 +427,7 @@ else:
         start=time.time()
         history,model=train_network(model,traingen,testgen,trainlocs,testlocs)
         dists=predict_locs(model,predgen,sdlong,meanlong,sdlat,meanlat,testlocs,pred,samples,testgen)
-        plot_history(history,dists,args.gnuplot)
+        plot_history(history)
         end=time.time()
         elapsed=end-start
         print("run time "+str(elapsed/60)+" minutes")
@@ -486,7 +472,6 @@ else:
 #                         impute_missing=True,
 #                         max_SNPs=None,
 #                         min_mac=2,
-#                         gnuplot=True,
 #                         out="/Users/cj/Desktop/test",
 #                         plot_history='True',
 #                         dropout_prop=0.25,
