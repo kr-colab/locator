@@ -1,19 +1,20 @@
 `Locator` is a supervised machine learning method for predicting the geographic origin of a sample from
-genotype or sequencing data. A manuscript describing it and its use can be found at https://elifesciences.org/articles/54507
+genotype or sequencing data. See our paper for details here https://elifesciences.org/articles/54507.
 
 # Installation 
 
-The easiest way to install `locator` is to download the github repo and run the setup script. It's usually a good idea to do this in a new conda environment (https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html) to avoid version conflicts with other software: 
+We recommend installing in a new python environment with conda (https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html): 
 
 ```
 conda create --name locator
 conda activate locator
 git clone https://github.com/kr-colab/locator.git
 cd locator
-pip install -r req.txt
+pip install -U -r req.txt
+python setup.py install
 ```
 
-We recommend running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
+Analysis will be much faster on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
 
 # Overview
 `locator` reads in a set of genotypes and locations, trains a neural network to approximate the relationship between them, and predicts locations for a set of samples held out from the training routine. Samples with known locations are split randomly into a training set (used to fit model parameters) and a validation set (used to tune hyperparameters of the optimizer and evaluate error after training). Predictions are then generated for all samples with unknown coordinates. By fitting multiple models to different regions of the genome or to bootstrapped subsets of the full SNP matrix, the approach can also estimate uncertainty in a location estimate. 
