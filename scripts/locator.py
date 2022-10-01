@@ -217,7 +217,6 @@ def split_train_test(ac,locs):
     return train,test,traingen,testgen,trainlocs,testlocs,pred,predgen
 
 def load_network(traingen,dropout_prop):
-    from tensorflow.keras import backend as K
     def euclidean_distance_loss(y_true, y_pred):
         return K.sqrt(K.sum(K.square(y_pred - y_true),axis=-1))
     model = tf.keras.Sequential()
@@ -321,6 +320,50 @@ def plot_history(history):
         ax2.plot(history.history['loss'][3:],"-",color="black",lw=0.5)
         ax2.set_xlabel("Training Loss")
         fig.savefig(args.out+"_fitplot.pdf",bbox_inches='tight')
+
+
+def get_nd_euclidean_distance(a,b):
+    '''
+    get euclidean distance between n-dimensional arrays a and b (arrays must have the same dimensionality)
+    '''
+    return( np.sqrt(np.sum((a-b)**2)) )
+
+
+### PCA baseline ###
+def PC_neighbor_mean(predgen,traingen,trainlocs,neighbors=5):
+    '''
+    Calculate the mean spatial coordinates of the nearest *n* (``neighbors``) training samples in PC space.
+    '''
+    pc=allel.pca(np.transpose(np.vstack((traingen,predgen))),scaler=None)
+    pc_coords=pc[0]
+    pc_train=pc_coords[:traingen.shape[0],:]
+    pc_test=pc_coords[traingen.shape[0]:pc_coords.shape[0],:]
+
+    #get PC distances from prediction to training samples
+    pcdists=np.zeros(shape=(pc_test.shape[0],pc_train.shape[0]))
+    for i in range(pc_train.shape[0]):
+        pcdists[:,i]=np.apply_along_axis(func1d=get_nd_euclidean_distance,
+                                        arr=pc_test,
+                                        b=pc_train[i,:],
+                                        axis=1)
+        
+    #find x nearest neighbors
+    neighbor_mask=np.apply_along_axis(lambda a: np.argwhere(np.argsort(a)<neighbors).flatten(),arr=pcdists,axis=1)
+    ttlocs=np.vstack((trainlocs,testlocs))
+    xpred=np.apply_along_axis(lambda a: np.mean(ttlocs[a,0]),arr=neighbor_mask,axis=1)
+    ypred=np.apply_along_axis(lambda a: np.mean(ttlocs[a,1]),arr=neighbor_mask,axis=1)
+    pcpred=np.transpose(np.vstack((xpred,ypred)))
+    
+    return pcpred
+
+
+# pcpred=PC_neighbor_mean(testgen,traingen,trainlocs)
+# a=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in pcpred])
+# b=np.array([[x[0]*sdlong+meanlong,x[1]*sdlat+meanlat] for x in testlocs])
+# np.corrcoef(a[:,0],b[:,0])
+# np.corrcoef(a[:,0],b[:,0])
+# a[0,:]
+# b[0,:]
 
 
 ### windows ###
