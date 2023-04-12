@@ -140,6 +140,21 @@ Rscript scripts/plot_locator.R --infile out/test/ --sample_data data/test_sample
 ```
 The first command will train five separate `locator` models and generate predictions for the unknown individuals, and the second will calculate centroids (in `out/test/test_centroids.txt `and generate a plot showing the spread of predicted locations (`out/test/test_windows.png`). In the `test_centroids` file, the "kd_x/y" columns give the location with highest kernal density, while the "gc_x/y" columns give the geographic centroids. See the preprint for details. 
 
+# Weighting sample importance during training
+In cases where datasets are unevenly sampled across space, `locator`'s predictions can be biased towards densely-sampled locations. One way to deal with this is by weighting each sample's contribution to the overall loss function, which can improve inference accuracy. Sample weights can be assigned within Locator using a kernel density function (tuned by bandwidth and lambda parameters) or two-dimensional histogram (tuned by bin number), or passed to Locator in a tab-delimited file with the columns `sampleID` and `sample_weight`. If manually assigning sample weights, **sample weights must sum to one** in order to have an effect. 
+
+```
+for BW in {0.1,0.5,1.0}; do
+	for LM in {1,5,10}; do
+		locator.py --vcf data/test_genotypes.vcf.gz --sample_data data/test_sample_data.txt \
+		--out out/weighted_training/test_bw$BW\_lambda$LM \
+		--weight_samples "kernel density" --bandwidth $BW --lam $LM
+	done
+done
+```
+
+While sample weights can improve inference, they can also reduce accuracy if improperly assigned. We recommend training without sample weights first to assess `locator`'s performance and have a baseline for predictions. See the (to-be-preprinted paper) for more details on sample weights.
+
 # Diagnosing Failures
 We recommend all users read the paper (https://elifesciences.org/articles/54507) before using Locator to get an idea of when and how it can fail. In general, location prediction works better in populations with less dispersal and datasets with more SNPs. When run on populations with too much dispersal or too little data, Locator tends to predict the middle of the distribution of training points. This behavior can also occur when a species is strongly structured in only one direction -- for example, if there is a strong north-south cline in allele frequencies but no east-west variation, Locator will typically generate accurate latitude predictions but will guess the middle of the longitudinal range of training points. 
 

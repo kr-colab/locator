@@ -13,8 +13,8 @@ parser.add_argument('--height',default=8,type=float,help='height in inches of th
 parser.add_argument('--samples',default=None,nargs='+',help='samples IDs to plot, separated by spaces. e.g. sample1 sample2 sample3. default=None')
 parser.add_argument('--nsamples',default=9,type=int,help='if no --samples argument is provided, --nsamples random samples will be plotted. default=9')
 parser.add_argument('--ncol',default=3,type=int,help='number of columns for multipanel plots (should evenly divide --nsamples, otherwise nsamples will supersede). default=3')
-parser.add_argument('--error',default=True,action='store_true',help='calculate error and plot summary? requires known locations for all samples. T/F. default=False')
-parser.add_argument('--plot',default=False,action='store_true',help='make plots of predictions? default=True')
+parser.add_argument('--error',default=False,action='store_true',help='calculate error and plot summary? requires known locations for all samples. T/F. default=False')
+parser.add_argument('--plot',default=True,action='store_true',help='make plots of predictions? default=True')
 parser.add_argument('--basemap',default=False,action='store_true',help='plot basemap? default=False')
 parser.add_argument('--longlat',default=False,action='store_true',help='set to True if coordinates are x and y in decimal degrees to print error in kilometers. default=False')
 parser.add_argument('--silence',default=False,action='store_true',help='no terminal output. T/F. default=True')
@@ -22,7 +22,7 @@ parser.add_argument('--training_samples',default=None,help='path to training met
 args=parser.parse_args()
 
 if args.basemap:
-    mapp=zarr.open('map.zarr',mode='r')
+    mapp=zarr.open('../data/map.zarr',mode='r')
 
 def kdepred(xcoords,ycoords): # kernel density
     try:
@@ -33,7 +33,7 @@ def kdepred(xcoords,ycoords): # kernel density
         kx=xcoords[max_index]
         ky=ycoords[max_index]
     except Exception:
-        print('oops')
+        print("Couldn't estimate kernel density - resorting to geographic centroids")
         kx=np.mean(xcoords)
         ky=np.mean(ycoords)
     return kx,ky

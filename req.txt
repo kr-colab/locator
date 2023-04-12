@@ -8,4 +8,4 @@ tqdm
 pandas
 zarr
 seaborn
-
+scikit-learn
