@@ -1,0 +1,24 @@
+name: locating
+channels:
+  - conda-forge
+  - anaconda
+  - bioconda
+dependencies:
+  - python==3.10
+  - cudatoolkit
+  - cudnn
+  - tensorflow-gpu=2.10
+  - keras
+  - gpustat
+  - pyyaml
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - pip
+  - scikit-allel
+  - scikit-learn
+  - zarr
+  - pip:
+      - keras-tcn
+      - tqdm
