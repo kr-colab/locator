@@ -124,6 +124,12 @@ if args.tfseed is not None:
 if args.gpu_number is not None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
 
+# set gpu memory limits
+gpu_devices = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpu_devices:
+    tf.config.experimental.set_memory_growth(gpu, True)
+
+
 #load old run parameters
 if args.load_params is not None:
     with open(args.predict_from_weights+"_params", 'r') as f:
