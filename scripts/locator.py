@@ -13,7 +13,7 @@ from sklearn.model_selection import GridSearchCV
 
 parser=argparse.ArgumentParser()
 parser.add_argument("--vcf",help="VCF with SNPs for all samples.")
-parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
+parser.add_argument("--zarr", type=str, help="zarr file of SNPs for all samples.")
 parser.add_argument("--matrix",help="tab-delimited matrix of minor allele counts with first column named 'sampleID'.\
                                      E.g., \
                                      \
@@ -123,12 +123,6 @@ if args.tfseed is not None:
     tf.random.set_seed(args.tfseed)
 if args.gpu_number is not None:
     os.environ["CUDA_VISIBLE_DEVICES"]=args.gpu_number
-
-# set gpu memory limits
-gpu_devices = tf.config.experimental.list_physical_devices('GPU')
-for gpu in gpu_devices:
-    tf.config.experimental.set_memory_growth(gpu, True)
-
 
 #load old run parameters
 if args.load_params is not None:
