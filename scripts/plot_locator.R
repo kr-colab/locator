@@ -52,7 +52,8 @@ centroid_method <- args$centroid_method
 # usemap <- T
 # haploid <- F
 
-load("~/locator/data/cntrymap.Rdata")
+if (usemap) {
+load("~/kernlab/locator/data/cntrymap.Rdata")}
 
 kdepred <- function(xcoords,ycoords){
   try({
@@ -101,7 +102,7 @@ if(error){
   #get error for centroids and max kernel density locations
   bp <- ddply(pd,.(sampleID),function(e) {
     k <- kdepred(e$xpred,e$ypred)
-    g <- as.data.frame(gCentroid(SpatialPoints(as.matrix(e[,c("xpred","ypred")]),proj4string = crs(proj4string(map)))))
+    g <- as.data.frame(gCentroid(SpatialPoints(as.matrix(e[,c("xpred","ypred")]),proj4string = crs(map))))
     out <- unlist(c(g,k))
     names(out) <- c("gc_x","gc_y","kd_x","kd_y")
     return(out)

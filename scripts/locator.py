@@ -113,6 +113,7 @@ parser.add_argument('--bins', default=None, nargs=2, type=int,
 parser.add_argument('--lam', default=1, type=float, help='factor to scale kernel density weights by:\
                     sample_weights = sample_weights ^ lam.')
 parser.add_argument('--bandwidth', default=None, type=float, help='bandwidth for fitting kernel density estimate to landscape. Default is found using GridSearchCV.')
+parser.add_argument('--sort_gt', default=False, action="store_true", help="sample data doesn't include all GT samples?")
 
 args=parser.parse_args()
 
@@ -188,6 +189,22 @@ def sort_samples(samples):
     locs=np.array(sample_data[["x","y"]])
     print("loaded "+str(np.shape(genotypes))+" genotypes\n\n")
     return(sample_data,locs)
+
+def sort_gt_samples(genotypes, samples):
+    # cut down genotypes to only the included samples
+    metadata = pd.read_csv(args.sample_data, sep='\t')
+    metadata = metadata.astype({'sampleID':str})
+    samples_list = list(samples)
+    samples_callset_index = [samples_list.index(s) for s in metadata['sampleID']]
+    samples = np.array([samples[s] for s in samples_callset_index])
+    metadata['callset_index'] = samples_callset_index
+    indexes = metadata.callset_index.values.sort()
+
+    genotypes=genotypes.take(samples_callset_index, axis=1)
+    sample_data,locs=sort_samples(samples)
+    return genotypes, sample_data, locs
+
+
 
 def make_kd_weights(trainlocs, lam, bandwidth):
     if bandwidth:
@@ -424,6 +441,7 @@ def plot_history(history,dists,gnuplot):
 
 ### windows ###
 if args.windows:
+    print('loading data...')
     callset = zarr.open_group(args.zarr, mode='r')
     gt = allel.GenotypeDaskArray(callset['calldata/GT'])
     samples = callset['samples'][:].astype('str')
@@ -494,7 +512,10 @@ else:
     if not args.bootstrap and not args.jacknife:
         boot=None
         genotypes,samples=load_genotypes()
-        sample_data,locs=sort_samples(samples)
+        if args.sort_gt:
+            genotypes, sample_data, locs = sort_gt_samples(genotypes, samples)
+        else:
+            sample_data,locs=sort_samples(samples)
         unnormedlocs=locs # save un-normalized locs for sample weighting
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
         ac=filter_snps(genotypes)
@@ -532,6 +553,10 @@ else:
     elif args.bootstrap:
         boot="FULL"
         genotypes,samples=load_genotypes()
+        if args.sort_gt:
+            genotypes, sample_data, locs = sort_gt_samples(genotypes, samples)
+        else:
+            sample_data,locs=sort_samples(samples)
         sample_data,locs=sort_samples(samples)
         unnormedlocs=locs
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
@@ -592,6 +617,10 @@ else:
     elif args.jacknife:
         boot="FULL"
         genotypes,samples=load_genotypes()
+        if args.sort_gt:
+            genotypes, sample_data, locs = sort_gt_samples(genotypes, samples)
+        else:
+            sample_data,locs=sort_samples(samples)
         sample_data,locs=sort_samples(samples)
         meanlong,sdlong,meanlat,sdlat,locs=normalize_locs(locs)
         unnormedlocs=locs
