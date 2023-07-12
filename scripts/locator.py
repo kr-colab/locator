@@ -5,7 +5,7 @@ from scipy import spatial
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 import argparse
-import json
+import json, dask
 from tensorflow.keras import backend as K
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.neighbors import KernelDensity
@@ -141,7 +141,7 @@ def load_genotypes():
         print("reading zarr")
         callset = zarr.open_group(args.zarr, mode='r')
         gt = callset['calldata/GT']
-        genotypes = allel.GenotypeArray(gt[:])
+        genotypes = allel.GenotypeDaskArray(gt[:])
         samples = callset['samples'][:]
         positions = callset['variants/POS']
     elif args.vcf is not None:
@@ -282,8 +282,9 @@ def replace_md(genotypes):
 def filter_snps(genotypes):
     print("filtering SNPs")
     tmp=genotypes.count_alleles()
-    biallel=tmp.is_biallelic()
+    biallel=tmp.is_biallelic().compute()
     genotypes=genotypes[biallel,:,:]
+    genotypes = allel.GenotypeDaskArray(genotypes)
     if not args.min_mac==1:
         derived_counts=genotypes.count_alleles()[:,1]
         ac_filter=[x >= args.min_mac for x in derived_counts]
