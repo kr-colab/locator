@@ -52,7 +52,7 @@ class Locator:
 
     vcf_path: str = attr.ib()
     sample_locs_path: str = attr.ib()
-    predict_samples: List[str] = attr.ib()
+    prediction_samples: List[str] = attr.ib(default = None)
     train_prop: float = attr.ib(default=0.8)
     seed: int = attr.ib(default=42)
     depth: int = attr.ib(default=6)
@@ -74,6 +74,17 @@ class Locator:
         )
         return v.rename({"#CHROM": "CHROM"})
 
+    @cached_property
+    def predict_samples(self) -> List[str]:
+        '''List of samples to predict. 
+        
+        If input prediction_samples is None, uses all samples with NAN x coordinate values.
+        '''
+        if self.prediction_samples is None:
+            return self.sample_locs.filter(pl.col('x').is_null())['sample'].to_list()
+        else:
+            return self.prediction_samples
+    
     @cached_property
     def vcf(self) -> pl.DataFrame:
         """Polars dataframe of the vcf."""
@@ -444,12 +455,12 @@ class Locator:
                     color='orangered',
                     legend_label='Predicted Locations',
                     alpha=1)
-            # fig.ellipse(x=self.predict['pred_x'],
-            #             y=self.predict['pred_y'],
-            #             width=3.92*np.exp(self.predict['log_sd_x']),
-            #             height=3.92*np.exp(self.predict['log_sd_y']),
-            #             color='steelblue',
-            #             alpha=0.25)
+            fig.ellipse(x=self.predict['pred_x'],
+                        y=self.predict['pred_y'],
+                        width=3.92*np.exp(self.predict['log_sd_x']),
+                        height=3.92*np.exp(self.predict['log_sd_y']),
+                        color='steelblue',
+                        alpha=0.25)
         if show_figure:
             show(fig)
         else:
@@ -475,12 +486,12 @@ def locator(
     *,
     vcf: str,
     sample_locs: str,
-    predict_samples: List[str],
+    prediction_samples: List[str] = None,
     train_prop: float = 0.8,
-    seed: int = 42,
-    depth: int = 10,
-    width: int = 256,
-    patience: int = 50,
+    seed: int = 12345,
+    depth: int = 6,
+    width: int = 128,
+    patience: int = 100,
     batch_size: int = 32,
     out: str = "locator",
     dropout_prop: float = 0.2,
@@ -492,7 +503,8 @@ def locator(
     Args:
         vcf: path to an uncompressed vcf
         sample_locs: path to a csv of sample locations with columns sample,x,y
-        predict_samples: list of samples to predict
+        prediction_samples: list of samples to predict. If none are passed, predicts samples with 
+            nan x coordinate values in sample_locs.
         train_prop: fraction of non-prediction samples used for primary model training. Remaining
             samples are used for hyperparameter tuning (i.e. validation set).
         seed: random seed
@@ -512,7 +524,7 @@ def locator(
     locator = Locator(
         vcf_path=vcf,
         sample_locs_path=sample_locs,
-        predict_samples=predict_samples,
+        prediction_samples=prediction_samples,
         train_prop=train_prop,
         seed=seed,
         depth=depth,
@@ -523,29 +535,31 @@ def locator(
         dropout_prop=dropout_prop,
         max_epochs=max_epochs,
     )
-    trained_network = locator.train_network()
-    predictions = locator.predict_samples(trained_network)
+    predictions = locator.predict
     if plot:
-        locator.plot_history(trained_network)
-        locator.plot_training_samples(trained_network)
+        locator.plot_history(show_figure=True)
+        locator.plot_training_samples(show_figure=True)
 
     predictions.write_csv(out + ".predicted_sample_locations.csv")
 
     return predictions
 
+if __name__ == '__main__':
+    defopt.run(locator)
 
 ############### debug zone ################
+#predict_samples=[f"msp_{x}" for x in range(50)],
 # self = Locator(
 #     vcf_path="/Users/cj/locator/data/test_genotypes2.vcf",
 #     sample_locs_path="/Users/cj/locator/data/test_sample_data.samplexy.csv",
-#     predict_samples=[f"msp_{x}" for x in range(50)],
 #     train_prop=0.8,
 #     patience=100,
-#     depth=6,
-#     width=256,
+#     depth=,
+#     width=128,
 #     batch_size=32,
 #     max_epochs=5000,
 # )
+# self.predict_samples
 # self.plot_training_samples(show_figure=True,
 #                            samples=self.sample_splits['val'][10:20])
 
