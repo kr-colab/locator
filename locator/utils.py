@@ -1,7 +1,6 @@
 """Utility functions for data processing"""
 
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 
 
@@ -32,7 +31,7 @@ def replace_md(genotypes):
     return ac
 
 
-def filter_snps(genotypes, min_mac=2, max_snps=None, impute=False):
+def filter_snps(genotypes, min_mac=1, max_snps=None, impute=False):
     """Filter SNPs based on criteria"""
     print("filtering SNPs")
     tmp = genotypes.count_alleles()
@@ -56,14 +55,18 @@ def filter_snps(genotypes, min_mac=2, max_snps=None, impute=False):
     return ac
 
 
-def split_train_test(ac, locs):
-    """Split data into training and test sets"""
+def split_train_test(ac, locs, train_split=0.8):
+    """Split data into training and test sets
+
+    Args:
+        ac: allele counts array
+        locs: locations array
+        train_split: proportion of data to use for training (default: 0.8)
+    """
     train = np.argwhere(~np.isnan(locs[:, 0]))
     train = np.array([x[0] for x in train])
-    pred = np.array([x for x in range(len(locs)) if not x in train])
-    test = np.random.choice(
-        train, round((1 - args.train_split) * len(train)), replace=False
-    )
+    pred = np.array([x for x in range(len(locs)) if x not in train])
+    test = np.random.choice(train, round((1 - train_split) * len(train)), replace=False)
     train = np.array([x for x in train if x not in test])
     traingen = np.transpose(ac[:, train])
     trainlocs = locs[train]

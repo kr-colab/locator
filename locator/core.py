@@ -1,13 +1,11 @@
 """Core functionality for locator"""
 
 import numpy as np
-from scipy import spatial
 import pandas as pd
 import allel
 import zarr
 import sys
 from tensorflow import keras
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import gnuplotlib as gp
 
@@ -273,3 +271,59 @@ class Locator:
                     terminal="dumb 60 20",
                     title="Test Error",
                 )
+
+    def run_windows(
+        self, genotypes, samples, window_start=0, window_size=5e5, window_stop=None
+    ):
+        """Run analysis in windows across the genome"""
+        # Get positions from zarr
+        positions = zarr.open_group(self.config["zarr"])["variants/POS"][:]
+
+        if window_stop is None:
+            window_stop = max(positions)
+
+        windows = range(window_start, window_stop, int(window_size))
+
+        for start in windows:
+            stop = start + int(window_size)
+            in_window = (positions >= start) & (positions < stop)
+
+            if sum(in_window) > 0:
+                window_genos = genotypes[in_window, :, :]
+                self.train(window_genos, samples)
+                self.predict(window_genos)
+
+    def run_jacknife(self, genotypes, samples, prop=0.05):
+        """Run jacknife analysis by dropping SNPs"""
+        n_snps = genotypes.shape[0]
+        n_drop = int(n_snps * prop)
+
+        # Get base predictions
+        base_preds = self.predict(genotypes)
+
+        # Run jacknife replicates
+        jack_preds = []
+        for i in range(self.config.get("nboots", 50)):
+            drop_idx = np.random.choice(n_snps, n_drop, replace=False)
+            keep_idx = np.array([x for x in range(n_snps) if x not in drop_idx])
+            jack_genos = genotypes[keep_idx, :, :]
+
+            self.train(jack_genos, samples)
+            preds = self.predict(jack_genos)
+            jack_preds.append(preds)
+
+        # Calculate uncertainty
+        jack_preds = np.array(jack_preds)
+        std_x = np.std(jack_preds[:, :, 0], axis=0)
+        std_y = np.std(jack_preds[:, :, 1], axis=0)
+
+        # Save results
+        results = pd.DataFrame(
+            {
+                "x": base_preds[:, 0],
+                "y": base_preds[:, 1],
+                "x_std": std_x,
+                "y_std": std_y,
+            }
+        )
+        results.to_csv(f"{self.config['out']}_jacknife.txt", index=False)

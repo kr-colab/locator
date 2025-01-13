@@ -14,7 +14,7 @@ setup(
     packages=find_packages(exclude=[]),
     install_requires=[
         "numpy>=1.20.0,<1.25.0",
-        "tensorflow>=2.10.0",
+        "tensorflow>=2.17.0",
         "h5py",
         "scikit-allel",
         "matplotlib",
