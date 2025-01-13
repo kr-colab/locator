@@ -15,7 +15,8 @@ def parse_args():
     parser.add_argument("--zarr", help="zarr file of SNPs for all samples.")
     parser.add_argument(
         "--matrix",
-        help="tab-delimited matrix of minor allele counts with first column named 'sampleID'.\
+        help="tab-delimited matrix of minor allele counts with \
+            first column named 'sampleID'.\
                                      E.g., \
                                      \
                                      sampleID\tsite1\tsite2\t...\n \
@@ -49,8 +50,9 @@ def parse_args():
         default=False,
         action="store_true",
         help="Run jacknife uncertainty estimate on a trained network. \
-                    NOTE: we recommend this only as a fast heuristic -- use the bootstrap \
-                    option or run windowed analyses for final results.",
+                    NOTE: we recommend this only as a fast heuristic \
+                    -- use the bootstrap option or run windowed analyses \
+                    for final results.",
     )
     parser.add_argument(
         "--jacknife_prop",
@@ -118,10 +120,7 @@ def parse_args():
     )
     parser.add_argument(
         "--out",
-        default="locator_out",
-        help="file name stem for output; will generate 'stem_predlocs.txt', \
-                          'stem_history.txt', 'stem_weights.hdf5', and 'stem_params.json'. \
-                          default: locator_out",
+        help="file name stem for output",
     )
     parser.add_argument(
         "--seed", default=None, type=int, help="random seed. default: None"
@@ -129,13 +128,14 @@ def parse_args():
     parser.add_argument(
         "--gpu_number",
         default=None,
+        type=str,
         help="restrict to specific GPU. default: None",
     )
     parser.add_argument(
         "--plot_history",
-        default=False,
-        action="store_true",
-        help="plot training history and prediction error",
+        default=True,
+        type=bool,
+        help="plot training history? default: True",
     )
     parser.add_argument(
         "--gnuplot",
@@ -162,7 +162,10 @@ def parse_args():
     parser.add_argument("--window_stop", default=None, help="default: max snp position")
     parser.add_argument("--window_size", default=5e5, help="default: 500000")
     parser.add_argument("--load_params", help="Load parameters from previous run")
-    parser.add_argument("--predict_from_weights", help="Load saved weights")
+    parser.add_argument(
+        "--predict_from_weights",
+        help="Load saved weights",
+    )
     parser.add_argument("--keep_weights", default=False, action="store_true")
 
     return parser.parse_args()
@@ -182,7 +185,7 @@ def main():
 
     # Load old parameters if specified
     if args.load_params is not None:
-        with open(args.predict_from_weights + "_params", "r") as f:
+        with open(args.load_params, "r") as f:
             args.__dict__ = json.load(f)
 
     # Initialize locator
@@ -198,22 +201,42 @@ def main():
     genotypes, samples = loc.load_genotypes(
         vcf=args.vcf, zarr=args.zarr, matrix=args.matrix
     )
+    sample_data, locs = loc.sort_samples(samples, genotypes)
 
     # Track runtime
     start = time.time()
 
     # Run analysis based on mode
     if args.windows:
-        # Windowed analysis logic
-        pass
+        if args.zarr is None:
+            raise ValueError("Windows mode requires zarr input")
+
+        window_start = int(args.window_start)
+        window_size = int(args.window_size)
+        window_stop = int(args.window_stop) if args.window_stop else None
+
+        loc.run_windows(
+            genotypes,
+            samples,
+            window_start=window_start,
+            window_size=window_size,
+            window_stop=window_stop,
+        )
+
     elif args.jacknife:
-        # Jacknife analysis logic
-        pass
+        # Run jacknife analysis
+        loc.train(genotypes, samples)
+        loc.run_jacknife(genotypes, samples, prop=args.jacknife_prop)
+
     elif args.bootstrap:
+        # Run bootstrap replicates
         for boot in range(args.nboots):
+            print(f"\nBootstrap {boot + 1}/{args.nboots}")
             loc.train(genotypes, samples, boot=boot)
             loc.predict(genotypes, boot=boot)
+
     else:
+        # Standard run
         loc.train(genotypes, samples)
         loc.predict(genotypes)
 
@@ -221,13 +244,19 @@ def main():
     if not args.keep_weights:
         if args.bootstrap:
             for boot in range(args.nboots):
-                os.remove(f"{args.out}_boot{boot}_weights.h5")
+                try:
+                    os.remove(f"{args.out}_boot{boot}_weights.h5")
+                except FileNotFoundError:
+                    pass
         else:
-            os.remove(f"{args.out}_weights.h5")
+            try:
+                os.remove(f"{args.out}_weights.h5")
+            except FileNotFoundError:
+                pass
 
     # Report runtime
     end = time.time()
-    print(f"run time {(end-start)/60} minutes")
+    print(f"Run time: {(end-start)/60:.2f} minutes")
 
     return 0
 
