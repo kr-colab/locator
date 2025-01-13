@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="locator",
-    version="1.3",
+    version="1.2.1",
     description="supervised machine learning of geographic location from genetic variation",
     long_description=long_description,
     long_description_content_type="text/markdown",
