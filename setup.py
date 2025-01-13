@@ -24,6 +24,7 @@ setup(
         "zarr",
         "seaborn",
         "gnuplotlib",
+        "gnuplot",
     ],
     entry_points={
         "console_scripts": [
