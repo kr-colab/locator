@@ -167,6 +167,12 @@ def parse_args():
         help="Load saved weights",
     )
     parser.add_argument("--keep_weights", default=False, action="store_true")
+    parser.add_argument(
+        "--verbose",
+        default=True,
+        action="store_true",
+        help="Print prediction metrics",
+    )
 
     return parser.parse_args()
 
@@ -197,7 +203,7 @@ def main():
         with open(args.out + "_params.json", "w") as f:
             json.dump(vars(args), f, indent=2)
 
-    # Load data
+    # Load and sort data
     genotypes, samples = loc.load_genotypes(
         vcf=args.vcf, zarr=args.zarr, matrix=args.matrix
     )
@@ -233,12 +239,12 @@ def main():
         for boot in range(args.nboots):
             print(f"\nBootstrap {boot + 1}/{args.nboots}")
             loc.train(genotypes, samples, boot=boot)
-            loc.predict(genotypes, boot=boot)
+            loc.predict(genotypes, boot=boot, verbose=args.verbose)
 
     else:
         # Standard run
         loc.train(genotypes, samples)
-        loc.predict(genotypes)
+        loc.predict(genotypes, verbose=args.verbose)
 
     # Clean up weights if not keeping them
     if not args.keep_weights:

@@ -7,7 +7,6 @@ import zarr
 import sys
 from tensorflow import keras
 import matplotlib.pyplot as plt
-import gnuplotlib as gp
 
 from .models import create_network
 from .utils import normalize_locs, filter_snps
@@ -90,15 +89,21 @@ class Locator:
             raise ValueError("No input specified. Please provide vcf, zarr, or matrix")
 
     def _split_train_test(self, genotypes, locations):
-        """Split data into training and test sets"""
-        train = np.random.choice(
-            range(len(locations)),
-            size=int(self.config["train_split"] * len(locations)),
-            replace=False,
-        )
-        test = np.array([x for x in range(len(locations)) if x not in train])
-        pred = np.array([x for x in range(len(locations))])
+        """Split data into training and test sets, handling missing locations"""
+        # Get indices of samples with known locations
+        train = np.argwhere(~np.isnan(locations[:, 0]))
+        train = np.array([x[0] for x in train])
 
+        # Get indices of samples with unknown locations
+        pred = np.array([x for x in range(len(locations)) if x not in train])
+
+        # Split known locations into train/test
+        test = np.random.choice(
+            train, round((1 - self.config["train_split"]) * len(train)), replace=False
+        )
+        train = np.array([x for x in train if x not in test])
+
+        # Prepare data arrays
         traingen = np.transpose(genotypes[:, train])
         testgen = np.transpose(genotypes[:, test])
         trainlocs = locations[train]
@@ -110,9 +115,9 @@ class Locator:
     def _create_callbacks(self, boot=0):
         """Create Keras callbacks for training"""
         filepath = (
-            f"{self.config['out']}_boot{boot}_weights.h5"
+            f"{self.config['out']}_boot{boot}.weights.h5"
             if self.config.get("bootstrap", False)
-            else f"{self.config['out']}_weights.h5"
+            else f"{self.config['out']}.weights.h5"
         )
 
         checkpointer = keras.callbacks.ModelCheckpoint(
@@ -145,13 +150,12 @@ class Locator:
 
     def train(self, genotypes, samples, boot=0):
         """Train the model"""
-        # Load and process sample data
-        sample_data = pd.read_csv(self.config["sample_data"], sep="\t")
-        locations = np.array(sample_data[["x", "y"]])
+        # Get sorted sample data and locations
+        sample_data, locs = self.sort_samples(samples, genotypes)
 
         # Normalize locations
         self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_locs = (
-            normalize_locs(locations)
+            normalize_locs(locs)
         )
 
         # Filter SNPs
@@ -166,6 +170,12 @@ class Locator:
         train, test, traingen, testgen, trainlocs, testlocs, pred, predgen = (
             self._split_train_test(filtered_genotypes, normalized_locs)
         )
+
+        # Store prediction and test data for later use
+        self.pred_indices = pred
+        self.predgen = predgen
+        self.testgen = testgen
+        self.testlocs = testlocs
 
         # Create and train model
         self.model = create_network(
@@ -194,12 +204,52 @@ class Locator:
 
         return self.history
 
-    def predict(self, genotypes, boot=0):
+    def predict(self, genotypes, boot=0, verbose=True):
         """Predict locations"""
         if self.model is None:
             raise ValueError("Model must be trained before prediction")
 
-        predictions = self.model.predict(genotypes)
+        # Use stored prediction data instead of raw genotypes
+        predictions = self.model.predict(self.predgen)
+
+        # Calculate validation metrics using test data
+        test_predictions = self.model.predict(self.testgen)
+
+        # Denormalize test predictions and actual test locations
+        test_predictions = np.array(
+            [
+                [x[0] * self.sdlong + self.meanlong, x[1] * self.sdlat + self.meanlat]
+                for x in test_predictions
+            ]
+        )
+        test_actual = np.array(
+            [
+                [x[0] * self.sdlong + self.meanlong, x[1] * self.sdlat + self.meanlat]
+                for x in self.testlocs
+            ]
+        )
+
+        if verbose:
+            # Calculate R² for longitude and latitude
+            r2_long = np.corrcoef(test_predictions[:, 0], test_actual[:, 0])[0][1] ** 2
+            r2_lat = np.corrcoef(test_predictions[:, 1], test_actual[:, 1])[0][1] ** 2
+
+            # Calculate mean and median distances
+            from scipy import spatial
+
+            distances = [
+                spatial.distance.euclidean(test_predictions[x, :], test_actual[x, :])
+                for x in range(len(test_predictions))
+            ]
+            mean_dist = np.mean(distances)
+            median_dist = np.median(distances)
+
+            print(
+                f"R²(x)={r2_long:.4f}\n"
+                f"R²(y)={r2_lat:.4f}\n"
+                f"Mean validation error: {mean_dist:.4f}\n"
+                f"Median validation error: {median_dist:.4f}\n"
+            )
 
         # Denormalize predictions
         predictions = np.array(
@@ -242,7 +292,7 @@ class Locator:
         print("loaded " + str(np.shape(genotypes)) + " genotypes\n\n")
         return sample_data, locs
 
-    def plot_history(self, history, dists, gnuplot):
+    def plot_history(self, history):
         """Plot training history and prediction error"""
         if self.config.get("plot_history", False):
             plt.switch_backend("agg")
@@ -255,22 +305,6 @@ class Locator:
             ax2.plot(history.history["loss"][3:], "-", color="black", lw=0.5)
             ax2.set_xlabel("Training Loss")
             fig.savefig(self.config["out"] + "_fitplot.pdf", bbox_inches="tight")
-            if gnuplot:
-                gp.plot(
-                    np.array(history.history["val_loss"][3:]),
-                    unset="grid",
-                    terminal="dumb 60 20",
-                    title="Validation Loss by Epoch",
-                )
-                gp.plot(
-                    (
-                        np.array(dists),
-                        dict(histogram="freq", binwidth=np.std(dists) / 5),
-                    ),
-                    unset="grid",
-                    terminal="dumb 60 20",
-                    title="Test Error",
-                )
 
     def run_windows(
         self, genotypes, samples, window_start=0, window_size=5e5, window_stop=None
