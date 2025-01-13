@@ -369,7 +369,7 @@ def load_callbacks(boot):
     return checkpointer, earlystop, reducelr
 
 
-def train_network(model, traingen, testgen, trainlocs, testlocs, callbacks):
+def train_network(model, traingen, testgen, trainlocs, testlocs, callbacks, boot=0):
     history = model.fit(
         traingen,
         trainlocs,
@@ -399,6 +399,7 @@ def predict_locs(
     samples,
     testgen,
     history,
+    boot=0,
     verbose=True,
 ):
     if verbose == True:
@@ -410,24 +411,26 @@ def predict_locs(
     predout = pd.DataFrame(prediction)
     predout.columns = ["x", "y"]
     predout["sampleID"] = samples[pred]
+
+    # Get base filename for predictions
     if args.bootstrap or args.jacknife:
-        predout.to_csv(args.out + "_boot" + str(boot) + "_predlocs.txt", index=False)
-        testlocs2 = np.array(
-            [[x[0] * sdlong + meanlong, x[1] * sdlat + meanlat] for x in testlocs]
-        )
+        outfile = args.out + "_boot" + str(boot) + "_predlocs.txt"
     elif args.windows:
-        predout.to_csv(
-            args.out + "_" + str(i) + "-" + str(i + size - 1) + "_predlocs.txt",
-            index=False,
-        )
-        testlocs2 = np.array(
-            [[x[0] * sdlong + meanlong, x[1] * sdlat + meanlat] for x in testlocs]
+        # For windowed analysis, use the window index from args
+        window_start = int(args.window_start)
+        window_size = int(args.window_size)
+        outfile = (
+            f"{args.out}_{window_start}-{window_start + window_size - 1}_predlocs.txt"
         )
     else:
-        predout.to_csv(args.out + "_predlocs.txt", index=False)
-        testlocs2 = np.array(
-            [[x[0] * sdlong + meanlong, x[1] * sdlat + meanlat] for x in testlocs]
-        )
+        outfile = args.out + "_predlocs.txt"
+
+    predout.to_csv(outfile, index=False)
+
+    testlocs2 = np.array(
+        [[x[0] * sdlong + meanlong, x[1] * sdlat + meanlat] for x in testlocs]
+    )
+
     p2 = model.predict(testgen)
     p2 = np.array([[x[0] * sdlong + meanlong, x[1] * sdlat + meanlat] for x in p2])
     r2_long = np.corrcoef(p2[:, 0], testlocs2[:, 0])[0][1] ** 2
@@ -519,31 +522,61 @@ def main():
         split_train_test(ac, locs)
     )
 
-    # Load and train network
-    model = load_network(traingen, args.dropout_prop)
-    callbacks = load_callbacks(0)  # 0 for non-bootstrap run
-    history, model = train_network(
-        model, traingen, testgen, trainlocs, testlocs, callbacks
-    )
+    if args.bootstrap:
+        for boot in range(args.nboots):
+            # Load and train network
+            model = load_network(traingen, args.dropout_prop)
+            callbacks = load_callbacks(boot)  # Pass boot number
+            history, model = train_network(
+                model, traingen, testgen, trainlocs, testlocs, callbacks, boot
+            )
 
-    # Predict locations
-    dists = predict_locs(
-        model,
-        predgen,
-        sdlong,
-        meanlong,
-        sdlat,
-        meanlat,
-        testlocs,
-        pred,
-        samples,
-        testgen,
-        history,
-    )
+            # Predict locations
+            dists = predict_locs(
+                model,
+                predgen,
+                sdlong,
+                meanlong,
+                sdlat,
+                meanlat,
+                testlocs,
+                pred,
+                samples,
+                testgen,
+                history,
+                boot,  # Pass boot number to predict_locs
+            )
 
-    # Plot if requested
-    if args.plot_history:
-        plot_history(history, dists, args.gnuplot)
+            # Plot if requested
+            if args.plot_history:
+                plot_history(history, dists, args.gnuplot)
+    else:
+        # Load and train network
+        model = load_network(traingen, args.dropout_prop)
+        callbacks = load_callbacks(0)  # 0 for non-bootstrap run
+        history, model = train_network(
+            model, traingen, testgen, trainlocs, testlocs, callbacks
+        )
+
+        # Predict locations
+        dists = predict_locs(
+            model,
+            predgen,
+            sdlong,
+            meanlong,
+            sdlat,
+            meanlat,
+            testlocs,
+            pred,
+            samples,
+            testgen,
+            history,
+            0,  # Pass 0 for non-bootstrap run
+        )
+
+        # Plot if requested
+        if args.plot_history:
+            plot_history(history, dists, args.gnuplot)
 
     return 0
 

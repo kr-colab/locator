@@ -28,6 +28,7 @@ setup(
     entry_points={
         "console_scripts": [
             "locator=locator.locator:main",
+            "vcf_to_zarr=scripts.vcf_to_zarr:main",
         ],
     },
     zip_safe=False,
