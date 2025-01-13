@@ -10,7 +10,7 @@ conda create --name locator
 conda activate locator
 git clone https://github.com/kr-colab/locator.git
 cd locator
-pip install -e .
+pip install .
 ```
 
 We recommend running on a CUDA-enabled GPU (https://www.tensorflow.org/install/gpu).
