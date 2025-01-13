@@ -239,12 +239,12 @@ def main():
         for boot in range(args.nboots):
             print(f"\nBootstrap {boot + 1}/{args.nboots}")
             loc.train(genotypes, samples, boot=boot)
-            loc.predict(genotypes, boot=boot, verbose=args.verbose)
+            loc.predict(boot=boot, verbose=args.verbose)
 
     else:
         # Standard run
         loc.train(genotypes, samples)
-        loc.predict(genotypes, verbose=args.verbose)
+        loc.predict(verbose=args.verbose)
 
     # Clean up weights if not keeping them
     if not args.keep_weights:

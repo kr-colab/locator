@@ -204,12 +204,12 @@ class Locator:
 
         return self.history
 
-    def predict(self, genotypes, boot=0, verbose=True):
+    def predict(self, boot=0, verbose=True):
         """Predict locations"""
         if self.model is None:
             raise ValueError("Model must be trained before prediction")
 
-        # Use stored prediction data instead of raw genotypes
+        # Use stored prediction data
         predictions = self.model.predict(self.predgen)
 
         # Calculate validation metrics using test data
