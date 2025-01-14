@@ -141,13 +141,6 @@ parser.add_argument(
                     default: True",
 )
 parser.add_argument(
-    "--gnuplot",
-    default=False,
-    action="store_true",
-    help="print acii plot of training history to stdout? \
-                    default: False",
-)
-parser.add_argument(
     "--keep_weights",
     default=False,
     action="store_true",
@@ -477,7 +470,7 @@ def predict_locs(
     return dists
 
 
-def plot_history(history, dists, gnuplot):
+def plot_history(history, dists):
     if args.plot_history:
         plt.switch_backend("agg")
         fig = plt.figure(figsize=(4, 1.5), dpi=200)
@@ -489,20 +482,6 @@ def plot_history(history, dists, gnuplot):
         ax2.plot(history.history["loss"][3:], "-", color="black", lw=0.5)
         ax2.set_xlabel("Training Loss")
         fig.savefig(args.out + "_fitplot.pdf", bbox_inches="tight")
-        if gnuplot:
-            gp.plot(
-                np.array(history.history["val_loss"][3:]),
-                unset="grid",
-                terminal="dumb 60 20",
-                # set= 'logscale y',
-                title="Validation Loss by Epoch",
-            )
-            gp.plot(
-                (np.array(dists), dict(histogram="freq", binwidth=np.std(dists) / 5)),
-                unset="grid",
-                terminal="dumb 60 20",
-                title="Test Error",
-            )
 
 
 def main():
@@ -594,7 +573,7 @@ def main():
             args.out = original_out  # Restore original output path
 
             if args.plot_history:
-                plot_history(history, dists, args.gnuplot)
+                plot_history(history, dists)
 
             if not args.keep_weights:
                 subprocess.run(f"rm {args.out}.weights.h5", shell=True)
@@ -625,7 +604,7 @@ def main():
                 history,
             )
             if args.plot_history:
-                plot_history(history, dists, args.gnuplot)
+                plot_history(history, dists)
 
         elif args.bootstrap:
             # 1. Initial Full Run
@@ -650,7 +629,7 @@ def main():
                 boot,
             )
             if args.plot_history:
-                plot_history(history, dists, args.gnuplot)
+                plot_history(history, dists)
 
             # 2. Bootstrap Replicates
             for boot in range(args.nboots):
@@ -696,7 +675,7 @@ def main():
                     boot,
                 )
                 if args.plot_history:
-                    plot_history(history, dists, args.gnuplot)
+                    plot_history(history, dists)
 
                 # 7. Cleanup to prevent memory leaks
                 K.clear_session()
@@ -725,7 +704,7 @@ def main():
                 boot,
             )
             if args.plot_history:
-                plot_history(history, dists, args.gnuplot)
+                plot_history(history, dists)
             end = time.time()
             elapsed = end - start
             print("run time " + str(elapsed / 60) + " minutes")
