@@ -66,7 +66,16 @@ class Locator:
         self.sdlat = None
 
     def _load_from_zarr(self, zarr_path):
-        """Load genotypes from zarr file"""
+        """Load genotypes from zarr file.
+
+        Args:
+            zarr_path: Path to zarr file containing genotype data
+
+        Returns:
+            tuple: (genotypes, samples) where:
+                - genotypes is an allel.GenotypeArray containing genetic data
+                - samples is a numpy array of sample IDs
+        """
         print("reading zarr")
         callset = zarr.open_group(zarr_path, mode="r")
         gt = callset["calldata/GT"]
@@ -75,7 +84,19 @@ class Locator:
         return genotypes, samples
 
     def _load_from_vcf(self, vcf_path):
-        """Load genotypes from VCF file"""
+        """Load genotypes from VCF file.
+
+        Args:
+            vcf_path: Path to VCF file containing genotype data
+
+        Returns:
+            tuple: (genotypes, samples) where:
+                - genotypes is an allel.GenotypeArray containing genetic data
+                - samples is a numpy array of sample IDs
+
+        Raises:
+            ValueError: If VCF file cannot be read
+        """
         print("reading VCF")
         vcf = allel.read_vcf(vcf_path)
         if vcf is None:
@@ -85,7 +106,19 @@ class Locator:
         return genotypes, samples
 
     def _load_from_matrix(self, matrix_path):
-        """Load genotypes from matrix file"""
+        """Load genotypes from matrix file.
+
+        Args:
+            matrix_path: Path to tab-delimited matrix file containing genotype data.
+                File should have a header row with 'sampleID' as first column,
+                followed by variant columns. Each row contains genotype counts (0,1,2)
+                for one sample.
+
+        Returns:
+            tuple: (genotypes, samples) where:
+                - genotypes is an allel.GenotypeArray containing genetic data
+                - samples is a numpy array of sample IDs
+        """
         gmat = pd.read_csv(matrix_path, sep="\t")
         samples = np.array(gmat["sampleID"])
         gmat = gmat.drop(labels="sampleID", axis=1)
@@ -459,7 +492,14 @@ class Locator:
         return sample_data, locs
 
     def plot_history(self, history):
-        """Plot training history and prediction error"""
+        """Plot training history and prediction error.
+
+        Creates a figure with two subplots showing the validation loss and training loss
+        over epochs. Saves the plot to a PDF file using the output prefix specified in config.
+
+        Args:
+            history: keras.callbacks.History object containing training history
+        """
         if self.config.get("plot_history", False):
             plt.switch_backend("agg")
             fig = plt.figure(figsize=(4, 1.5), dpi=200)
@@ -475,7 +515,16 @@ class Locator:
     def run_windows(
         self, genotypes, samples, window_start=0, window_size=5e5, window_stop=None
     ):
-        """Run analysis in windows across the genome"""
+        """Run analysis in windows across the genome.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            window_start (int, optional): Start position for windowed analysis. Defaults to 0.
+            window_size (float, optional): Size of each window in base pairs. Defaults to 5e5.
+            window_stop (int, optional): Stop position for windowed analysis.
+                Defaults to None (max position).
+        """
         # Get positions from zarr
         positions = zarr.open_group(self.config["zarr"])["variants/POS"][:]
 
@@ -494,7 +543,20 @@ class Locator:
                 self.predict(window_genos)
 
     def run_jacknife(self, genotypes, samples, prop=0.05):
-        """Run jacknife analysis by dropping SNPs"""
+        """Run jacknife analysis by dropping SNPs.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            prop (float, optional): Proportion of SNPs to drop in each replicate.
+                Defaults to 0.05.
+
+        The jacknife analysis:
+        1. Gets base predictions using all SNPs
+        2. Runs multiple replicates dropping a random subset of SNPs
+        3. Calculates uncertainty estimates from the variation in predictions
+        4. Saves results including standard deviations of predictions
+        """
         n_snps = genotypes.shape[0]
         n_drop = int(n_snps * prop)
 
