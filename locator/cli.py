@@ -207,7 +207,7 @@ def main():
     genotypes, samples = loc.load_genotypes(
         vcf=args.vcf, zarr=args.zarr, matrix=args.matrix
     )
-    sample_data, locs = loc.sort_samples(samples, genotypes)
+    sample_data, locs = loc.sort_samples(samples, args.sample_data)
 
     # Track runtime
     start = time.time()
@@ -231,19 +231,28 @@ def main():
 
     elif args.jacknife:
         # Run jacknife analysis
-        loc.train(genotypes, samples)
+        loc.train(
+            genotypes=genotypes, samples=samples, sample_data_file=args.sample_data
+        )
         loc.run_jacknife(genotypes, samples, prop=args.jacknife_prop)
 
     elif args.bootstrap:
         # Run bootstrap replicates
         for boot in range(args.nboots):
             print(f"\nBootstrap {boot + 1}/{args.nboots}")
-            loc.train(genotypes, samples, boot=boot)
+            loc.train(
+                genotypes=genotypes,
+                samples=samples,
+                sample_data_file=args.sample_data,
+                boot=boot,
+            )
             loc.predict(boot=boot, verbose=args.verbose)
 
     else:
         # Standard run
-        loc.train(genotypes, samples)
+        loc.train(
+            genotypes=genotypes, samples=samples, sample_data_file=args.sample_data
+        )
         loc.predict(verbose=args.verbose)
 
     # Clean up weights if not keeping them

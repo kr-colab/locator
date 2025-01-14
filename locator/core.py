@@ -16,8 +16,48 @@ class Locator:
     """Main class for locator functionality"""
 
     def __init__(self, config=None):
-        """Initialize Locator with configuration"""
-        self.config = config or {}
+        """Initialize Locator with configuration.
+
+        Args:
+            config: Optional dictionary of configuration parameters that will override defaults
+
+        Default config parameters:
+            train_split: Proportion of data to use for training (0.9)
+            out: Output file prefix ("locator_out")
+            bootstrap: Whether to run bootstrap replicates (False)
+            keras_verbose: Verbosity level for Keras (1)
+            patience: Epochs to wait before early stopping (100)
+            batch_size: Training batch size (32)
+            max_epochs: Maximum training epochs (5000)
+            min_mac: Minimum minor allele count (2)
+            max_SNPs: Maximum number of SNPs to use (None)
+            impute_missing: Whether to impute missing genotypes (False)
+            dropout_prop: Dropout proportion (0.25)
+            nlayers: Number of neural network layers (8)
+            width: Width of neural network layers (256)
+        """
+        default_config = {
+            # Data splitting
+            "train_split": 0.9,
+            # Output
+            "out": "locator_out",
+            # Training parameters
+            "bootstrap": False,
+            "keras_verbose": 1,
+            "patience": 100,
+            "batch_size": 32,
+            "max_epochs": 5000,
+            # Data processing
+            "min_mac": 2,
+            "max_SNPs": None,
+            "impute_missing": False,
+            # Network architecture
+            "dropout_prop": 0.25,
+            "nlayers": 8,
+            "width": 256,
+        }
+
+        self.config = {**default_config, **(config or {})}
         self.model = None
         self.history = None
         self.meanlong = None
@@ -78,6 +118,20 @@ class Locator:
         return genotypes, samples
 
     def load_genotypes(self, vcf=None, zarr=None, matrix=None):
+        """Load genotype data from various input file formats.
+
+        Args:
+            vcf: Path to VCF file containing genotype data
+            zarr: Path to Zarr file containing genotype data
+            matrix: Path to tab-delimited matrix file containing genotype data
+
+        Returns:
+            tuple: (genotypes, samples) where genotypes is an allel.GenotypeArray
+            and samples is a numpy array of sample IDs
+
+        Raises:
+            ValueError: If no input file is specified
+        """
         """Load genotype data from various sources"""
         if zarr is not None:
             return self._load_from_zarr(zarr)
@@ -88,8 +142,26 @@ class Locator:
         else:
             raise ValueError("No input specified. Please provide vcf, zarr, or matrix")
 
-    def _split_train_test(self, genotypes, locations):
-        """Split data into training and test sets, handling missing locations"""
+    def _split_train_test(self, genotypes, locations, train_split=0.9):
+        """Split genotype and location data into training and test sets.
+
+        Args:
+            genotypes: GenotypeArray containing genetic data for all samples
+            locations: Array of geographic coordinates (x,y) for each sample,
+                      with NaN values for samples with unknown locations
+            train_split: Proportion of samples to use for training (default: 0.9)
+
+        Returns:
+            tuple: (train_idx, test_idx, train_gen, test_gen, train_locs, test_locs, pred_idx, pred_gen)
+                train_idx: Indices of training samples
+                test_idx: Indices of test samples
+                train_gen: Genotype data for training samples
+                test_gen: Genotype data for test samples
+                train_locs: Location data for training samples
+                test_locs: Location data for test samples
+                pred_idx: Indices of samples with unknown locations
+                pred_gen: Genotype data for samples with unknown locations
+        """
         # Get indices of samples with known locations
         train = np.argwhere(~np.isnan(locations[:, 0]))
         train = np.array([x[0] for x in train])
@@ -99,7 +171,7 @@ class Locator:
 
         # Split known locations into train/test
         test = np.random.choice(
-            train, round((1 - self.config["train_split"]) * len(train)), replace=False
+            train, round((1 - train_split) * len(train)), replace=False
         )
         train = np.array([x for x in train if x not in test])
 
@@ -113,7 +185,14 @@ class Locator:
         return train, test, traingen, testgen, trainlocs, testlocs, pred, predgen
 
     def _create_callbacks(self, boot=0):
-        """Create Keras callbacks for training"""
+        """Create Keras callbacks for training.
+
+        Args:
+            boot: Bootstrap replicate number (default: 0)
+
+        Returns:
+            list: List of Keras callbacks [ModelCheckpoint, EarlyStopping, ReduceLROnPlateau]
+        """
         filepath = (
             f"{self.config['out']}_boot{boot}.weights.h5"
             if self.config.get("bootstrap", False)
@@ -148,10 +227,37 @@ class Locator:
 
         return [checkpointer, earlystop, reducelr]
 
-    def train(self, genotypes, samples, boot=0):
-        """Train the model"""
+    def train(
+        self,
+        *,  # Force keyword arguments
+        genotypes,
+        samples,
+        sample_data_file=None,
+        boot=0,
+    ):
+        """Train the locator model on genotype data.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            sample_data_file: Path to sample data file (overrides config["sample_data"])
+            boot: Bootstrap replicate number (default: 0)
+
+        Raises:
+            ValueError: If sample_data file path is not provided in config or as argument
+
+        Returns:
+            keras.callbacks.History: Training history
+        """
+        # Get sample data file path from argument or config
+        sample_data_path = sample_data_file or self.config.get("sample_data")
+        if not sample_data_path:
+            raise ValueError(
+                "sample_data file path must be provided in config or as argument"
+            )
+
         # Get sorted sample data and locations
-        sample_data, locs = self.sort_samples(samples, genotypes)
+        sample_data, locs = self.sort_samples(samples, sample_data_path)
 
         # Normalize locations
         self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_locs = (
@@ -168,7 +274,11 @@ class Locator:
 
         # Split data
         train, test, traingen, testgen, trainlocs, testlocs, pred, predgen = (
-            self._split_train_test(filtered_genotypes, normalized_locs)
+            self._split_train_test(
+                filtered_genotypes,
+                normalized_locs,
+                train_split=self.config.get("train_split", 0.9),
+            )
         )
 
         # Store prediction and test data for later use
@@ -185,7 +295,7 @@ class Locator:
             dropout_prop=self.config.get("dropout_prop", 0.25),
         )
 
-        callbacks = self._create_callbacks(boot)
+        callbacks = self._create_callbacks(boot=boot)
 
         self.history = self.model.fit(
             traingen,
@@ -205,6 +315,19 @@ class Locator:
         return self.history
 
     def predict(self, boot=0, verbose=True):
+        """Make predictions for samples with unknown locations.
+
+        Args:
+            boot (int, optional): Bootstrap replicate number. Defaults to 0.
+            verbose (bool, optional): Whether to print validation metrics. Defaults to True.
+
+        Returns:
+            numpy.ndarray: Array of predicted coordinates (longitude, latitude) for samples
+                with unknown locations.
+
+        Raises:
+            ValueError: If model has not been trained before prediction.
+        """
         """Predict locations"""
         if self.model is None:
             raise ValueError("Model must be trained before prediction")
@@ -270,26 +393,69 @@ class Locator:
 
         return predictions
 
-    def sort_samples(self, samples, genotypes):
-        """Sort and validate sample data"""
-        sample_data = pd.read_csv(self.config["sample_data"], sep="\t")
+    def sort_samples(self, samples=None, sample_data_file=None):
+        """Sort samples and match with location data from a sample data file.
+
+        This method reads a tab-delimited sample data file containing location coordinates,
+        matches the samples with the genotype data, and ensures the ordering is consistent.
+        The sample data file must contain columns 'sampleID', 'x', and 'y', where x and y
+        represent geographic coordinates. Sample IDs must exactly match those in the genotype data.
+
+        Args:
+            samples (numpy.ndarray): Array of sample IDs from the genotype data
+            sample_data_file (str): Path to tab-delimited file with columns 'sampleID', 'x', 'y'.
+                                  X and Y values for samples without known locations should be NA.
+
+        Returns:
+            tuple: A tuple containing:
+                - sample_data (pandas.DataFrame): DataFrame with sample metadata and coordinates
+                - locs (numpy.ndarray): Array of x,y coordinates for each sample
+
+        Raises:
+            ValueError: If sample_data file is missing 'sampleID' column or if sample IDs
+                      don't match between genotype and sample data.
+        """
+        """Sort samples and match with location data
+
+        Args:
+            samples: array of sample IDs from genotype data
+            sample_data_file: path to tab-delimited file with columns 'sampleID', 'x', 'y'
+
+        Returns:
+            tuple: (sample_data DataFrame, locations array)
+        """
+        if samples is None or sample_data_file is None:
+            raise ValueError("samples and sample_data_file must be provided")
+
+        # Read sample data file
+        sample_data = pd.read_csv(sample_data_file, sep="\t")
+
+        # Ensure sampleID column exists
+        if "sampleID" not in sample_data.columns:
+            raise ValueError("sample_data file must contain 'sampleID' column")
+
+        # Create backup of sampleID and set as index
         sample_data["sampleID2"] = sample_data["sampleID"]
         sample_data.set_index("sampleID", inplace=True)
+
+        # Reindex to match genotype sample order
         samples = samples.astype("str")
         sample_data = sample_data.reindex(np.array(samples))
 
-        # Update to use .iloc for pandas 2.0+ compatibility
+        # Verify sample order matches
         if not all(
             [
                 sample_data["sampleID2"].iloc[x] == samples[x]
                 for x in range(len(samples))
             ]
         ):
-            print("sample ordering failed! Check that sample IDs match the VCF.")
-            sys.exit()
+            raise ValueError(
+                "Sample ordering failed! Check that sample IDs match the VCF."
+            )
 
+        # Extract location data
         locs = np.array(sample_data[["x", "y"]])
-        print("loaded " + str(np.shape(genotypes)) + " genotypes\n\n")
+
         return sample_data, locs
 
     def plot_history(self, history):
