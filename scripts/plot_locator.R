@@ -52,7 +52,7 @@ centroid_method <- args$centroid_method
 # usemap <- T
 # haploid <- F
 
-load("~/locator/data/cntrymap.Rdata")
+# load("~/locator/data/cntrymap.Rdata")
 
 kdepred <- function(xcoords,ycoords){
   try({
