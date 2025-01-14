@@ -6,7 +6,6 @@ with open("README.md", "r") as fh:
 setup(
     name="locator",
     version="1.2.1",
-    version="1.2.1",
     description="supervised machine learning of geographic location from genetic variation",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -15,7 +14,6 @@ setup(
     packages=find_packages(exclude=[]),
     install_requires=[
         "numpy>=1.20.0,<1.25.0",
-        "tensorflow>=2.17.0",
         "tensorflow>=2.17.0",
         "h5py",
         "scikit-allel",
@@ -29,7 +27,6 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "locator=locator.cli:main",
             "locator=locator.cli:main",
             "vcf_to_zarr=scripts.vcf_to_zarr:main",
         ],
