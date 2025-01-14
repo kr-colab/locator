@@ -27,6 +27,7 @@ setup(
     entry_points={
         "console_scripts": [
             "locator=locator.locator:main",
+            "vcf_to_zarr=scripts.vcf_to_zarr:main",
         ],
     },
     zip_safe=False,
@@ -41,5 +42,6 @@ setup(
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
+        "License :: OSI Approved :: Non-Profit Open Software License 3.0 (NPOSL-3.0)",
     ],
 )
