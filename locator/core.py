@@ -570,7 +570,7 @@ class Locator:
             keep_idx = np.array([x for x in range(n_snps) if x not in drop_idx])
             jack_genos = genotypes[keep_idx, :, :]
 
-            self.train(jack_genos, samples)
+            self.train(genotypes=jack_genos, samples=samples)
             preds = self.predict(jack_genos)
             jack_preds.append(preds)
 

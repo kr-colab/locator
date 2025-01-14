@@ -27,3 +27,8 @@ locator.train(
 
 # do prediction
 locator.predict(verbose=True)
+
+# do jacknife
+locator.run_jacknife(genotypes, samples)
+
+# plot the results

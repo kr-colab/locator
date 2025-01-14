@@ -23,6 +23,7 @@ setup(
         "pandas",
         "zarr",
         "seaborn",
+        "cartopy",
     ],
     entry_points={
         "console_scripts": [
