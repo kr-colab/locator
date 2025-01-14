@@ -268,22 +268,16 @@ class Locator:
         genotypes,
         samples,
         sample_data_file=None,
-        boot=0,
+        boot=None,
+        train_gen=None,
+        test_gen=None,
+        pred_gen=None,
+        setup_only=False,
     ):
-        """Train the locator model on genotype data.
+        """Train the locator model on genotype data."""
+        # Store samples
+        self.samples = samples
 
-        Args:
-            genotypes: Array of genotype data
-            samples: Sample IDs corresponding to genotypes
-            sample_data_file: Path to sample data file (overrides config["sample_data"])
-            boot: Bootstrap replicate number (default: 0)
-
-        Raises:
-            ValueError: If sample_data file path is not provided in config or as argument
-
-        Returns:
-            keras.callbacks.History: Training history
-        """
         # Get sample data file path from argument or config
         sample_data_path = sample_data_file or self.config.get("sample_data")
         if not sample_data_path:
@@ -299,47 +293,74 @@ class Locator:
             normalize_locs(locs)
         )
 
-        # Filter SNPs
-        filtered_genotypes = filter_snps(
-            genotypes,
-            min_mac=self.config.get("min_mac", 2),
-            max_snps=self.config.get("max_SNPs"),
-            impute=self.config.get("impute_missing", False),
-        )
+        # Filter SNPs if not using pre-processed data
+        if train_gen is None:
+            filtered_genotypes = filter_snps(
+                genotypes,
+                min_mac=self.config.get("min_mac", 2),
+                max_snps=self.config.get("max_SNPs"),
+                impute=self.config.get("impute_missing", False),
+            )
 
-        # Split data
-        train, test, traingen, testgen, trainlocs, testlocs, pred, predgen = (
-            self._split_train_test(
+            # Split data
+            (
+                train,
+                test,
+                self.traingen,
+                self.testgen,
+                trainlocs,
+                testlocs,
+                pred,
+                self.predgen,
+            ) = self._split_train_test(
                 filtered_genotypes,
                 normalized_locs,
                 train_split=self.config.get("train_split", 0.9),
             )
-        )
+            # Store prediction indices
+            self.pred_indices = pred
+        else:
+            # Use pre-processed data (for bootstrapping)
+            self.traingen = train_gen
+            self.testgen = test_gen
+            self.predgen = pred_gen
+            # Get train/test indices and locations from original split
+            train = np.where(~np.isnan(normalized_locs[:, 0]))[0]
+            test = np.random.choice(
+                train,
+                round((1 - self.config.get("train_split", 0.9)) * len(train)),
+                replace=False,
+            )
+            train = np.array([x for x in train if x not in test])
+            trainlocs = normalized_locs[train]
+            testlocs = normalized_locs[test]
 
-        # Store prediction and test data for later use
-        self.pred_indices = pred
-        self.predgen = predgen
-        self.testgen = testgen
+        # Store test data for later use
         self.testlocs = testlocs
 
-        # Create and train model
-        self.model = create_network(
-            input_shape=traingen.shape[1],
-            width=self.config.get("width", 256),
-            n_layers=self.config.get("nlayers", 8),
-            dropout_prop=self.config.get("dropout_prop", 0.25),
-        )
+        # Create and train model if not already created
+        if self.model is None:
+            self.model = create_network(
+                input_shape=self.traingen.shape[1],
+                width=self.config.get("width", 256),
+                n_layers=self.config.get("nlayers", 8),
+                dropout_prop=self.config.get("dropout_prop", 0.25),
+            )
+
+        # Return early if setup_only
+        if setup_only:
+            return None
 
         callbacks = self._create_callbacks(boot=boot)
 
         self.history = self.model.fit(
-            traingen,
+            self.traingen,
             trainlocs,
             epochs=self.config.get("max_epochs", 5000),
             batch_size=self.config.get("batch_size", 32),
             shuffle=True,
             verbose=self.config.get("keras_verbose", 1),
-            validation_data=(testgen, testlocs),
+            validation_data=(self.testgen, testlocs),
             callbacks=callbacks,
         )
 
@@ -362,7 +383,7 @@ class Locator:
 
         Returns:
             numpy.ndarray or pandas.DataFrame: Array of predicted coordinates or DataFrame with
-                sampleIDs as index and x,y coordinates as columns
+                x,y coordinates and sampleID columns
         """
         if self.model is None:
             raise ValueError("Model must be trained before prediction")
@@ -372,47 +393,8 @@ class Locator:
             prediction_genotypes if prediction_genotypes is not None else self.predgen
         )
 
-        # Use stored prediction data
+        # Get predictions
         predictions = self.model.predict(predgen)
-
-        # Calculate validation metrics using test data
-        test_predictions = self.model.predict(self.testgen)
-
-        # Denormalize test predictions and actual test locations
-        test_predictions = np.array(
-            [
-                [x[0] * self.sdlong + self.meanlong, x[1] * self.sdlat + self.meanlat]
-                for x in test_predictions
-            ]
-        )
-        test_actual = np.array(
-            [
-                [x[0] * self.sdlong + self.meanlong, x[1] * self.sdlat + self.meanlat]
-                for x in self.testlocs
-            ]
-        )
-
-        if verbose:
-            # Calculate R² for longitude and latitude
-            r2_long = np.corrcoef(test_predictions[:, 0], test_actual[:, 0])[0][1] ** 2
-            r2_lat = np.corrcoef(test_predictions[:, 1], test_actual[:, 1])[0][1] ** 2
-
-            # Calculate mean and median distances
-            from scipy import spatial
-
-            distances = [
-                spatial.distance.euclidean(test_predictions[x, :], test_actual[x, :])
-                for x in range(len(test_predictions))
-            ]
-            mean_dist = np.mean(distances)
-            median_dist = np.median(distances)
-
-            print(
-                f"R²(x)={r2_long:.4f}\n"
-                f"R²(y)={r2_lat:.4f}\n"
-                f"Mean validation error: {mean_dist:.4f}\n"
-                f"Median validation error: {median_dist:.4f}\n"
-            )
 
         # Denormalize predictions
         predictions = np.array(
@@ -422,11 +404,12 @@ class Locator:
             ]
         )
 
-        # Save predictions
+        # Create DataFrame
         pred_df = pd.DataFrame(predictions, columns=["x", "y"])
-        if hasattr(self, "samples"):
-            pred_df["sampleID"] = self.samples[self.pred_indices]
+        if hasattr(self, "samples") and hasattr(self, "pred_indices"):
+            pred_df.insert(0, "sampleID", self.samples[self.pred_indices])
 
+        # Save predictions to file
         outfile = (
             f"{self.config['out']}_boot{boot}_predlocs.txt"
             if self.config.get("bootstrap", False) or self.config.get("jacknife", False)
@@ -434,12 +417,8 @@ class Locator:
         )
         pred_df.to_csv(outfile, index=False)
 
-        # Create return DataFrame if requested
         if return_df:
-            return_pred_df = pd.DataFrame(predictions, columns=["x", "y"])
-            if hasattr(self, "samples"):  # Add sample IDs if available
-                return_pred_df.index = self.samples[self.pred_indices]
-            return return_pred_df
+            return pred_df
 
         return predictions
 
@@ -538,23 +517,6 @@ class Locator:
         window_stop=None,
         return_df=False,
     ):
-        """Run analysis in windows across the genome.
-
-        Args:
-            genotypes: Array of genotype data
-            samples: Sample IDs corresponding to genotypes
-            window_start (int, optional): Start position for windowed analysis. Defaults to 0.
-            window_size (float, optional): Size of each window in base pairs. Defaults to 5e5.
-            window_stop (int, optional): Stop position for windowed analysis.
-                Defaults to None (max position).
-            return_df (bool, optional): Whether to return DataFrame of all predictions.
-                Defaults to False.
-
-        Returns:
-            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
-                predictions for each window, with columns named 'x_win{start}', 'y_win{start}'
-                for each window. Row index contains sample IDs.
-        """
         # Store samples
         self.samples = samples
 
@@ -572,7 +534,7 @@ class Locator:
 
         windows = range(int(window_start), int(window_stop), int(window_size))
 
-        # Initial training to set up pred_indices
+        # Initial training to set up model and data
         first_window = (self.positions >= int(window_start)) & (
             self.positions < int(window_start + window_size)
         )
@@ -580,27 +542,42 @@ class Locator:
             window_genos = genotypes[first_window, :, :]
             self.train(genotypes=window_genos, samples=samples)
 
-        # Create DataFrame to store all predictions if requested
-        all_predictions = (
-            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
-        )
+        # Create lists to store predictions
+        pred_dfs = []
 
+        print("starting window analysis")
         for start in tqdm(windows):
             stop = start + int(window_size)
             in_window = (self.positions >= start) & (self.positions < stop)
 
             if sum(in_window) > 0:
+                # Get genotypes for this window
                 window_genos = genotypes[in_window, :, :]
+
+                # Clear existing model
+                self.model = None
+
+                # Train on window data
                 self.train(genotypes=window_genos, samples=samples)
 
-                if return_df:
-                    preds = self.predict(return_df=True)
-                    all_predictions[f"x_win{start}"] = preds["x"]
-                    all_predictions[f"y_win{start}"] = preds["y"]
-                else:
-                    self.predict()
+                # Get predictions using self.predgen which is already properly formatted
+                preds = self.predict(return_df=True)
 
-        return all_predictions if return_df else None
+                if return_df:
+                    # Rename columns to include window start
+                    boot_preds = preds[["x", "y"]].copy()
+                    boot_preds.columns = [f"x_win{start}", f"y_win{start}"]
+                    pred_dfs.append(boot_preds)
+
+                # Clear keras session
+                keras.backend.clear_session()
+
+        if return_df:
+            # Concatenate all predictions and add sampleIDs
+            all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+            return all_predictions
+
+        return None
 
     def run_jacknife(self, genotypes, samples, prop=0.05, return_df=False):
         """Run jacknife analysis by dropping SNPs.
@@ -636,9 +613,7 @@ class Locator:
             )[0]
 
         # Create DataFrame to store all predictions if requested
-        all_predictions = (
-            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
-        )
+        all_predictions = None
 
         # Initial training to set up model (but don't output predictions)
         self.train(genotypes=genotypes, samples=samples)
@@ -665,14 +640,109 @@ class Locator:
             for i in sites_to_remove:
                 pg[:, i] = np.random.binomial(2, af[i], size=pg.shape[0])
 
-            # Get predictions, optionally adding to DataFrame
+            # Get predictions
+            preds = self.predict(
+                boot=boot, verbose=False, prediction_genotypes=pg, return_df=True
+            )
+
+            if return_df:
+                if all_predictions is None:
+                    # Initialize DataFrame with sampleIDs from first prediction
+                    all_predictions = pd.DataFrame({"sampleID": preds["sampleID"]})
+
+                # Add predictions for this replicate
+                all_predictions[f"x_{boot}"] = preds["x"]
+                all_predictions[f"y_{boot}"] = preds["y"]
+
+        return all_predictions if return_df else None
+
+    def run_bootstraps(self, genotypes, samples, n_bootstraps=50, return_df=False):
+        """Run bootstrap replicates by resampling SNPs with replacement.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            n_bootstraps (int, optional): Number of bootstrap replicates. Defaults to 50.
+            return_df (bool, optional): Whether to return DataFrame of all predictions.
+                Defaults to False.
+
+        Returns:
+            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
+                all predictions, with columns named 'x_0', 'y_0', 'x_1', 'y_1', etc.
+                for each bootstrap replicate. Row index contains sample IDs.
+        """
+        # Store samples
+        self.samples = samples
+
+        # Set bootstrap flag in config
+        self.config["bootstrap"] = True
+        self.config["nboots"] = n_bootstraps
+
+        # Initial training to set up model and data
+        self.train(genotypes=genotypes, samples=samples, setup_only=True)
+
+        # Create DataFrame to store all predictions if requested
+        all_predictions = (
+            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
+        )
+        if return_df:
+            # Add sampleID column - use the actual sample IDs
+            pred_samples = [self.samples[i] for i in self.pred_indices]
+            all_predictions.insert(0, "sampleID", pred_samples)
+
+        print("starting bootstrap resampling")
+
+        for boot in tqdm(range(n_bootstraps)):
+            # Set random seed
+            np.random.seed(np.random.choice(range(int(1e6)), 1))
+
+            # Create copies of data
+            traingen2 = copy.deepcopy(self.traingen)
+            testgen2 = copy.deepcopy(self.testgen)
+            predgen2 = copy.deepcopy(self.predgen)
+
+            # Resample sites with replacement
+            site_order = np.random.choice(
+                traingen2.shape[1], traingen2.shape[1], replace=True
+            )
+
+            # Reorder sites in all datasets
+            traingen2 = traingen2[:, site_order]
+            testgen2 = testgen2[:, site_order]
+            predgen2 = predgen2[:, site_order]
+
+            # Create new model
+            self.model = create_network(
+                input_shape=traingen2.shape[1],
+                width=self.config.get("width", 256),
+                n_layers=self.config.get("nlayers", 8),
+                dropout_prop=self.config.get("dropout_prop", 0.25),
+            )
+
+            # Train on bootstrapped data
+            self.train(
+                genotypes=None,  # use the traingen2 set
+                samples=samples,
+                boot=boot,
+                train_gen=traingen2,
+                test_gen=testgen2,
+                pred_gen=predgen2,
+            )
+
+            # Get predictions
             if return_df:
                 preds = self.predict(
-                    boot=boot, verbose=False, prediction_genotypes=pg, return_df=True
+                    boot=boot,
+                    verbose=False,
+                    prediction_genotypes=predgen2,
+                    return_df=True,
                 )
                 all_predictions[f"x_{boot}"] = preds["x"]
                 all_predictions[f"y_{boot}"] = preds["y"]
             else:
-                self.predict(boot=boot, verbose=False, prediction_genotypes=pg)
+                self.predict(boot=boot, verbose=False, prediction_genotypes=predgen2)
+
+            # Clear keras session
+            keras.backend.clear_session()
 
         return all_predictions if return_df else None
