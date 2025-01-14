@@ -7,6 +7,8 @@ import zarr
 import sys
 from tensorflow import keras
 import matplotlib.pyplot as plt
+import copy
+from tqdm import tqdm
 
 from .models import create_network
 from .utils import normalize_locs, filter_snps
@@ -347,26 +349,31 @@ class Locator:
 
         return self.history
 
-    def predict(self, boot=0, verbose=True):
+    def predict(self, boot=0, verbose=True, prediction_genotypes=None, return_df=False):
         """Make predictions for samples with unknown locations.
 
         Args:
             boot (int, optional): Bootstrap replicate number. Defaults to 0.
             verbose (bool, optional): Whether to print validation metrics. Defaults to True.
+            prediction_genotypes (numpy.ndarray, optional): Override default prediction genotypes.
+                Used for jacknife resampling. Defaults to None.
+            return_df (bool, optional): Whether to return predictions as pandas DataFrame.
+                Defaults to False.
 
         Returns:
-            numpy.ndarray: Array of predicted coordinates (longitude, latitude) for samples
-                with unknown locations.
-
-        Raises:
-            ValueError: If model has not been trained before prediction.
+            numpy.ndarray or pandas.DataFrame: Array of predicted coordinates or DataFrame with
+                sampleIDs as index and x,y coordinates as columns
         """
-        """Predict locations"""
         if self.model is None:
             raise ValueError("Model must be trained before prediction")
 
+        # Use provided prediction genotypes if available, otherwise use stored ones
+        predgen = (
+            prediction_genotypes if prediction_genotypes is not None else self.predgen
+        )
+
         # Use stored prediction data
-        predictions = self.model.predict(self.predgen)
+        predictions = self.model.predict(predgen)
 
         # Calculate validation metrics using test data
         test_predictions = self.model.predict(self.testgen)
@@ -417,12 +424,22 @@ class Locator:
 
         # Save predictions
         pred_df = pd.DataFrame(predictions, columns=["x", "y"])
+        if hasattr(self, "samples"):
+            pred_df["sampleID"] = self.samples[self.pred_indices]
+
         outfile = (
             f"{self.config['out']}_boot{boot}_predlocs.txt"
-            if self.config.get("bootstrap", False)
+            if self.config.get("bootstrap", False) or self.config.get("jacknife", False)
             else f"{self.config['out']}_predlocs.txt"
         )
         pred_df.to_csv(outfile, index=False)
+
+        # Create return DataFrame if requested
+        if return_df:
+            return_pred_df = pd.DataFrame(predictions, columns=["x", "y"])
+            if hasattr(self, "samples"):  # Add sample IDs if available
+                return_pred_df.index = self.samples[self.pred_indices]
+            return return_pred_df
 
         return predictions
 
@@ -513,7 +530,13 @@ class Locator:
             fig.savefig(self.config["out"] + "_fitplot.pdf", bbox_inches="tight")
 
     def run_windows(
-        self, genotypes, samples, window_start=0, window_size=5e5, window_stop=None
+        self,
+        genotypes,
+        samples,
+        window_start=0,
+        window_size=5e5,
+        window_stop=None,
+        return_df=False,
     ):
         """Run analysis in windows across the genome.
 
@@ -524,25 +547,62 @@ class Locator:
             window_size (float, optional): Size of each window in base pairs. Defaults to 5e5.
             window_stop (int, optional): Stop position for windowed analysis.
                 Defaults to None (max position).
+            return_df (bool, optional): Whether to return DataFrame of all predictions.
+                Defaults to False.
+
+        Returns:
+            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
+                predictions for each window, with columns named 'x_win{start}', 'y_win{start}'
+                for each window. Row index contains sample IDs.
         """
+        # Store samples
+        self.samples = samples
+
         # Get positions from zarr
-        positions = zarr.open_group(self.config["zarr"])["variants/POS"][:]
+        if not hasattr(self, "positions"):
+            if not self.config.get("zarr"):
+                raise ValueError(
+                    "zarr path must be provided in config for windowed analysis"
+                )
+            callset = zarr.open_group(self.config["zarr"], mode="r")
+            self.positions = callset["variants/POS"][:]
 
         if window_stop is None:
-            window_stop = max(positions)
+            window_stop = max(self.positions)
 
-        windows = range(window_start, window_stop, int(window_size))
+        windows = range(int(window_start), int(window_stop), int(window_size))
 
-        for start in windows:
+        # Initial training to set up pred_indices
+        first_window = (self.positions >= int(window_start)) & (
+            self.positions < int(window_start + window_size)
+        )
+        if sum(first_window) > 0:
+            window_genos = genotypes[first_window, :, :]
+            self.train(genotypes=window_genos, samples=samples)
+
+        # Create DataFrame to store all predictions if requested
+        all_predictions = (
+            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
+        )
+
+        for start in tqdm(windows):
             stop = start + int(window_size)
-            in_window = (positions >= start) & (positions < stop)
+            in_window = (self.positions >= start) & (self.positions < stop)
 
             if sum(in_window) > 0:
                 window_genos = genotypes[in_window, :, :]
-                self.train(window_genos, samples)
-                self.predict(window_genos)
+                self.train(genotypes=window_genos, samples=samples)
 
-    def run_jacknife(self, genotypes, samples, prop=0.05):
+                if return_df:
+                    preds = self.predict(return_df=True)
+                    all_predictions[f"x_win{start}"] = preds["x"]
+                    all_predictions[f"y_win{start}"] = preds["y"]
+                else:
+                    self.predict()
+
+        return all_predictions if return_df else None
+
+    def run_jacknife(self, genotypes, samples, prop=0.05, return_df=False):
         """Run jacknife analysis by dropping SNPs.
 
         Args:
@@ -550,42 +610,69 @@ class Locator:
             samples: Sample IDs corresponding to genotypes
             prop (float, optional): Proportion of SNPs to drop in each replicate.
                 Defaults to 0.05.
+            return_df (bool, optional): Whether to return DataFrame of all predictions.
+                Defaults to False.
 
-        The jacknife analysis:
-        1. Gets base predictions using all SNPs
-        2. Runs multiple replicates dropping a random subset of SNPs
-        3. Calculates uncertainty estimates from the variation in predictions
-        4. Saves results including standard deviations of predictions
+        Returns:
+            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
+                all predictions, with columns named 'x_0', 'y_0', 'x_1', 'y_1', etc.
+                for each jacknife replicate. Row index contains sample IDs.
         """
-        n_snps = genotypes.shape[0]
-        n_drop = int(n_snps * prop)
+        # Store samples
+        self.samples = samples
 
-        # Get base predictions
-        base_preds = self.predict(genotypes)
+        # Set jacknife flag in config
+        self.config["jacknife"] = True
 
-        # Run jacknife replicates
-        jack_preds = []
-        for i in range(self.config.get("nboots", 50)):
-            drop_idx = np.random.choice(n_snps, n_drop, replace=False)
-            keep_idx = np.array([x for x in range(n_snps) if x not in drop_idx])
-            jack_genos = genotypes[keep_idx, :, :]
+        # Set up prediction indices if not already done
+        if not hasattr(self, "pred_indices"):
+            # Get sample data
+            sample_data = pd.read_csv(self.config["sample_data"], sep="\t")
+            # Find samples without locations (NA in x or y)
+            pred = sample_data.index[sample_data.x.isna() | sample_data.y.isna()].values
+            # Convert to indices in the samples array
+            self.pred_indices = np.where(
+                np.isin(np.array(samples), sample_data.index[pred])
+            )[0]
 
-            self.train(genotypes=jack_genos, samples=samples)
-            preds = self.predict(jack_genos)
-            jack_preds.append(preds)
-
-        # Calculate uncertainty
-        jack_preds = np.array(jack_preds)
-        std_x = np.std(jack_preds[:, :, 0], axis=0)
-        std_y = np.std(jack_preds[:, :, 1], axis=0)
-
-        # Save results
-        results = pd.DataFrame(
-            {
-                "x": base_preds[:, 0],
-                "y": base_preds[:, 1],
-                "x_std": std_x,
-                "y_std": std_y,
-            }
+        # Create DataFrame to store all predictions if requested
+        all_predictions = (
+            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
         )
-        results.to_csv(f"{self.config['out']}_jacknife.txt", index=False)
+
+        # Initial training to set up model (but don't output predictions)
+        self.train(genotypes=genotypes, samples=samples)
+
+        print("starting jacknife resampling")
+        af = []
+        # Convert genotypes to allele counts first
+        ac = genotypes.to_allele_counts()[:, :, 1]  # Get counts of alternate allele
+
+        # Calculate allele frequencies
+        for i in tqdm(range(ac.shape[0])):
+            freq = np.sum(ac[i, :]) / (ac.shape[1] * 2)
+            af.append(freq)
+        af = np.array(af)
+
+        for boot in tqdm(range(self.config.get("nboots", 50))):
+            callbacks = self._create_callbacks(boot)
+            pg = copy.deepcopy(self.predgen)
+
+            sites_to_remove = np.random.choice(
+                pg.shape[1], int(pg.shape[1] * prop), replace=False
+            )
+
+            for i in sites_to_remove:
+                pg[:, i] = np.random.binomial(2, af[i], size=pg.shape[0])
+
+            # Get predictions, optionally adding to DataFrame
+            if return_df:
+                preds = self.predict(
+                    boot=boot, verbose=False, prediction_genotypes=pg, return_df=True
+                )
+                all_predictions[f"x_{boot}"] = preds["x"]
+                all_predictions[f"y_{boot}"] = preds["y"]
+            else:
+                self.predict(boot=boot, verbose=False, prediction_genotypes=pg)
+
+        return all_predictions if return_df else None
