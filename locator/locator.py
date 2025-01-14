@@ -544,7 +544,7 @@ def main():
                 split_train_test(ac, locs)
             )
             model = load_network(traingen, args.dropout_prop)
-            callbacks = load_callbacks()
+            callbacks = load_callbacks(None)
 
             t1 = time.time()
             history, model = train_network(
@@ -586,7 +586,7 @@ def main():
         if not args.bootstrap and not args.jacknife:
             # Standard single run
             model = load_network(traingen, args.dropout_prop)
-            callbacks = load_callbacks()
+            callbacks = load_callbacks(None)
             history, model = train_network(
                 model, traingen, testgen, trainlocs, testlocs, callbacks
             )
