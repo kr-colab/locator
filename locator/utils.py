@@ -3,6 +3,13 @@
 import numpy as np
 from tqdm import tqdm
 
+__all__ = [
+    "load_genotypes",
+    "sort_samples",
+    "normalize_locs",
+    "filter_snps",
+]
+
 
 def normalize_locs(locs):
     """Normalize location coordinates"""

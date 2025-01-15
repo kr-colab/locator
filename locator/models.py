@@ -34,3 +34,8 @@ def create_network(input_shape, width=256, n_layers=8, dropout_prop=0.25):
     model.compile(optimizer="Adam", loss=euclidean_distance_loss)
 
     return model
+
+
+__all__ = [
+    "create_network",
+]
