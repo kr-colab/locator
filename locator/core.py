@@ -769,7 +769,7 @@ class Locator:
 
             if save_full_pred_matrix:
                 all_predictions.to_csv(
-                    f"{self.config['out']}_bootstrap_predlocs.csv", index=False
+                    f"{self.config['out']}_bootstrapq_predlocs.csv", index=False
                 )
             return all_predictions
 
