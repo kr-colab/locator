@@ -791,3 +791,127 @@ class Locator:
             return all_predictions
 
         return None
+
+    def train_holdout(self, genotypes, samples, k=10):
+        """Train the model while holding out k samples with known locations."""
+        # Store samples
+        self.samples = samples
+
+        print("\nDEBUG: Initial shapes:")
+        print(f"genotypes: {genotypes.shape}")
+        print(f"samples: {len(samples)}")
+
+        # Get sample data file path
+        sample_data_path = self.config.get("sample_data")
+        if not sample_data_path:
+            raise ValueError("sample_data file path must be provided in config")
+
+        # Get sorted sample data and locations
+        sample_data, locs = self.sort_samples(samples, sample_data_path)
+        print(f"\nDEBUG: After sort_samples:")
+        print(f"locs shape: {locs.shape}")
+
+        # Get indices of samples with known locations
+        known_idx = np.argwhere(~np.isnan(locs[:, 0]))
+        known_idx = np.array([x[0] for x in known_idx])
+        print(f"\nDEBUG: Known locations:")
+        print(f"Number of samples with known locations: {len(known_idx)}")
+
+        # Randomly select k samples to hold out
+        holdout_idx = np.random.choice(known_idx, k, replace=False)
+        mask = np.ones(len(locs), dtype=bool)
+        mask[holdout_idx] = False
+
+        print(f"\nDEBUG: Holdout info:")
+        print(f"Number of holdout samples: {len(holdout_idx)}")
+        print(f"Number of remaining samples: {np.sum(mask)}")
+
+        # Filter SNPs
+        filtered_genotypes = filter_snps(
+            genotypes,
+            min_mac=self.config.get("min_mac", 2),
+            max_snps=self.config.get("max_SNPs"),
+            impute=self.config.get("impute_missing", False),
+        )
+        print(f"\nDEBUG: After filter_snps:")
+        print(f"filtered_genotypes shape: {filtered_genotypes.shape}")
+
+        # Split remaining samples into train/test
+        (
+            train_idx,
+            test_idx,
+            self.traingen,
+            self.testgen,
+            train_locs,
+            test_locs,
+            pred_idx,
+            pred_gen,
+        ) = self._split_train_test(
+            filtered_genotypes[:, mask],
+            locs[mask],
+            train_split=self.config.get("train_split", 0.9),
+        )
+
+        print(f"\nDEBUG: After split_train_test:")
+        print(f"traingen shape: {self.traingen.shape}")
+        print(f"testgen shape: {self.testgen.shape}")
+        print(f"train_locs shape: {train_locs.shape}")
+        print(f"test_locs shape: {test_locs.shape}")
+
+        # Normalize locations using training data
+        self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_train_locs = (
+            normalize_locs(train_locs)
+        )
+
+        # Store training and test data
+        self.trainlocs = normalized_train_locs
+        self.testlocs = np.array(
+            [
+                [
+                    (x[0] - self.meanlong) / self.sdlong,
+                    (x[1] - self.meanlat) / self.sdlat,
+                ]
+                for x in test_locs
+            ]
+        )
+
+        # Store holdout data
+        self.holdout_idx = holdout_idx
+        self.holdout_gen = np.transpose(filtered_genotypes[:, holdout_idx])
+        holdout_locs = locs[holdout_idx]
+        self.holdout_locs = np.array(
+            [
+                [
+                    (x[0] - self.meanlong) / self.sdlong,
+                    (x[1] - self.meanlat) / self.sdlat,
+                ]
+                for x in holdout_locs
+            ]
+        )
+
+        # Create new model (force recreation)
+        self.model = create_network(
+            input_shape=self.traingen.shape[1],
+            width=self.config.get("width", 256),
+            n_layers=self.config.get("nlayers", 8),
+            dropout_prop=self.config.get("dropout_prop", 0.25),
+        )
+
+        callbacks = self._create_callbacks()
+
+        self.history = self.model.fit(
+            self.traingen,
+            self.trainlocs,
+            epochs=self.config.get("max_epochs", 5000),
+            batch_size=self.config.get("batch_size", 32),
+            shuffle=True,
+            verbose=self.config.get("keras_verbose", 1),
+            validation_data=(self.testgen, self.testlocs),
+            callbacks=callbacks,
+        )
+
+        # Save training history
+        hist_df = pd.DataFrame(self.history.history)
+        hist_df.to_csv(f"{self.config['out']}_history.txt", sep="\t", index=False)
+
+        return self.history
