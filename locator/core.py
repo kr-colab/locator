@@ -915,3 +915,45 @@ class Locator:
         hist_df.to_csv(f"{self.config['out']}_history.txt", sep="\t", index=False)
 
         return self.history
+
+    def predict_holdout(
+        self,
+        verbose=True,
+        return_df=False,
+        save_preds_to_disk=True,
+    ):
+        """Predict locations for held out samples.
+
+        Args:
+            verbose: Print progress and metrics
+            return_df: Return predictions as pandas DataFrame
+            save_preds_to_disk: Save predictions to disk
+
+        Returns:
+            If return_df is True, returns pandas DataFrame with predictions
+            Otherwise returns None
+        """
+        if not hasattr(self, "holdout_gen") or not hasattr(self, "holdout_locs"):
+            raise ValueError("No holdout data found. Run train_holdout() first.")
+
+        if verbose:
+            print("Predicting locations for holdout samples...")
+
+        # Get predictions
+        predictions = self.model.predict(self.holdout_gen, verbose=verbose)
+
+        # Create output dataframe
+        pred_df = pd.DataFrame(predictions, columns=["x", "y"])
+        pred_df["sampleID"] = self.samples[self.holdout_idx]
+
+        # Denormalize predictions
+        pred_df["x"] = pred_df["x"] * self.sdlong + self.meanlong
+        pred_df["y"] = pred_df["y"] * self.sdlat + self.meanlat
+
+        if save_preds_to_disk:
+            pred_df.to_csv(f"{self.config['out']}_holdout_predlocs.csv", index=False)
+
+        if return_df:
+            return pred_df
+
+        return None
