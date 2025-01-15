@@ -792,14 +792,26 @@ class Locator:
 
         return None
 
-    def train_holdout(self, genotypes, samples, k=10):
-        """Train the model while holding out k samples with known locations."""
+    def train_holdout(
+        self,
+        genotypes,
+        samples,
+        k=10,
+        holdout_indices=None,
+    ):
+        """Train the model while holding out samples with known locations.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            k: Number of samples to hold out (ignored if holdout_indices provided)
+            holdout_indices: Optional specific indices of samples to hold out
+
+        Returns:
+            keras.callbacks.History object from model training
+        """
         # Store samples
         self.samples = samples
-
-        print("\nDEBUG: Initial shapes:")
-        print(f"genotypes: {genotypes.shape}")
-        print(f"samples: {len(samples)}")
 
         # Get sample data file path
         sample_data_path = self.config.get("sample_data")
@@ -808,23 +820,31 @@ class Locator:
 
         # Get sorted sample data and locations
         sample_data, locs = self.sort_samples(samples, sample_data_path)
-        print(f"\nDEBUG: After sort_samples:")
-        print(f"locs shape: {locs.shape}")
 
         # Get indices of samples with known locations
         known_idx = np.argwhere(~np.isnan(locs[:, 0]))
         known_idx = np.array([x[0] for x in known_idx])
-        print(f"\nDEBUG: Known locations:")
-        print(f"Number of samples with known locations: {len(known_idx)}")
 
-        # Randomly select k samples to hold out
-        holdout_idx = np.random.choice(known_idx, k, replace=False)
+        # Set holdout indices
+        if holdout_indices is not None:
+            # Verify provided indices are valid
+            if not all(idx in known_idx for idx in holdout_indices):
+                raise ValueError(
+                    "All holdout_indices must be indices of samples with known locations"
+                )
+            holdout_idx = np.array(holdout_indices)
+        else:
+            # Random selection
+            if k >= len(known_idx):
+                raise ValueError(
+                    f"k ({k}) must be less than number of samples with known locations ({len(known_idx)})"
+                )
+            holdout_idx = np.random.choice(known_idx, k, replace=False)
+
+        # Create mask for non-holdout samples
         mask = np.ones(len(locs), dtype=bool)
         mask[holdout_idx] = False
-
-        print(f"\nDEBUG: Holdout info:")
-        print(f"Number of holdout samples: {len(holdout_idx)}")
-        print(f"Number of remaining samples: {np.sum(mask)}")
+        train_idx = known_idx[~np.isin(known_idx, holdout_idx)]
 
         # Filter SNPs
         filtered_genotypes = filter_snps(
@@ -833,39 +853,25 @@ class Locator:
             max_snps=self.config.get("max_SNPs"),
             impute=self.config.get("impute_missing", False),
         )
-        print(f"\nDEBUG: After filter_snps:")
-        print(f"filtered_genotypes shape: {filtered_genotypes.shape}")
 
         # Split remaining samples into train/test
-        (
-            train_idx,
-            test_idx,
-            self.traingen,
-            self.testgen,
-            train_locs,
-            test_locs,
-            pred_idx,
-            pred_gen,
-        ) = self._split_train_test(
-            filtered_genotypes[:, mask],
-            locs[mask],
-            train_split=self.config.get("train_split", 0.9),
-        )
+        test_size = round((1 - self.config.get("train_split", 0.9)) * len(train_idx))
+        test_idx = np.random.choice(train_idx, test_size, replace=False)
+        train_idx_final = np.array([x for x in train_idx if x not in test_idx])
 
-        print(f"\nDEBUG: After split_train_test:")
-        print(f"traingen shape: {self.traingen.shape}")
-        print(f"testgen shape: {self.testgen.shape}")
-        print(f"train_locs shape: {train_locs.shape}")
-        print(f"test_locs shape: {test_locs.shape}")
+        # Prepare training data arrays
+        self.traingen = np.transpose(filtered_genotypes[:, train_idx_final])
+        self.testgen = np.transpose(filtered_genotypes[:, test_idx])
 
-        # Normalize locations using training data
+        # Now normalize locations using only training data
+        train_locs = locs[train_idx_final]
         self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_train_locs = (
             normalize_locs(train_locs)
         )
 
-        # Store training and test data
-        self.trainlocs = normalized_train_locs
-        self.testlocs = np.array(
+        # Normalize test and holdout locations using same parameters
+        test_locs = locs[test_idx]
+        normalized_test_locs = np.array(
             [
                 [
                     (x[0] - self.meanlong) / self.sdlong,
@@ -875,11 +881,8 @@ class Locator:
             ]
         )
 
-        # Store holdout data
-        self.holdout_idx = holdout_idx
-        self.holdout_gen = np.transpose(filtered_genotypes[:, holdout_idx])
         holdout_locs = locs[holdout_idx]
-        self.holdout_locs = np.array(
+        normalized_holdout_locs = np.array(
             [
                 [
                     (x[0] - self.meanlong) / self.sdlong,
@@ -888,6 +891,15 @@ class Locator:
                 for x in holdout_locs
             ]
         )
+
+        # Store training and test data
+        self.trainlocs = normalized_train_locs
+        self.testlocs = normalized_test_locs
+
+        # Store holdout data
+        self.holdout_idx = holdout_idx
+        self.holdout_gen = np.transpose(filtered_genotypes[:, holdout_idx])
+        self.holdout_locs = normalized_holdout_locs
 
         # Create new model (force recreation)
         self.model = create_network(
@@ -905,7 +917,7 @@ class Locator:
             epochs=self.config.get("max_epochs", 5000),
             batch_size=self.config.get("batch_size", 32),
             shuffle=True,
-            verbose=self.config.get("keras_verbose", 1),
+            verbose=False,  # self.config.get("keras_verbose", 1),
             validation_data=(self.testgen, self.testlocs),
             callbacks=callbacks,
         )
@@ -955,5 +967,90 @@ class Locator:
 
         if return_df:
             return pred_df
+
+        return None
+
+    def run_holdouts(
+        self,
+        genotypes,
+        samples,
+        k=10,
+        return_df=False,
+        save_full_pred_matrix=True,
+    ):
+        """Run systematic holdouts across all samples with known locations.
+
+        This function iteratively holds out groups of samples, trains models without them,
+        and predicts their locations. This provides unbiased predictions for all samples
+        with known locations since each prediction is made without using that sample in training.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            k: Number of samples to hold out in each iteration
+            return_df: Whether to return DataFrame of all predictions
+            save_full_pred_matrix: Whether to save the full prediction matrix
+
+        Returns:
+            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
+                all predictions. Row index contains sample IDs.
+        """
+        # Store samples
+        self.samples = samples
+
+        # Get sample data
+        sample_data_path = self.config.get("sample_data")
+        if not sample_data_path:
+            raise ValueError("sample_data file path must be provided in config")
+
+        # Get sorted sample data and locations
+        sample_data, locs = self.sort_samples(samples, sample_data_path)
+
+        # Get indices of samples with known locations
+        known_idx = np.argwhere(~np.isnan(locs[:, 0]))
+        known_idx = np.array([x[0] for x in known_idx])
+
+        # Create list to store prediction DataFrames
+        pred_dfs = []
+
+        # Calculate number of iterations needed
+        n_iterations = len(known_idx) // k
+        if len(known_idx) % k != 0:
+            n_iterations += 1
+
+        print(f"Running {n_iterations} iterations, holding out {k} samples at a time")
+
+        # Iterate through samples in groups of size k
+        for i in tqdm(range(n_iterations)):
+            start_idx = i * k
+            end_idx = min(start_idx + k, len(known_idx))
+            holdout_indices = known_idx[start_idx:end_idx]
+
+            # Train model without holdout samples
+            self.train_holdout(
+                genotypes=genotypes, samples=samples, holdout_indices=holdout_indices
+            )
+
+            # Get predictions for holdout samples
+            preds = self.predict_holdout(
+                return_df=True, save_preds_to_disk=not save_full_pred_matrix
+            )
+
+            if return_df:
+                pred_dfs.append(preds)
+
+            # Clear keras session to free memory
+            keras.backend.clear_session()
+
+        if return_df:
+            # Concatenate all predictions
+            all_predictions = pd.concat(pred_dfs, axis=0)
+
+            if save_full_pred_matrix:
+                all_predictions.to_csv(
+                    f"{self.config['out']}_allholdouts_predlocs.csv", index=False
+                )
+
+            return all_predictions
 
         return None
