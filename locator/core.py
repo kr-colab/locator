@@ -657,20 +657,6 @@ class Locator:
         return all_predictions if return_df else None
 
     def run_bootstraps(self, genotypes, samples, n_bootstraps=50, return_df=False):
-        """Run bootstrap replicates by resampling SNPs with replacement.
-
-        Args:
-            genotypes: Array of genotype data
-            samples: Sample IDs corresponding to genotypes
-            n_bootstraps (int, optional): Number of bootstrap replicates. Defaults to 50.
-            return_df (bool, optional): Whether to return DataFrame of all predictions.
-                Defaults to False.
-
-        Returns:
-            pandas.DataFrame or None: If return_df=True, returns DataFrame containing
-                all predictions, with columns named 'x_0', 'y_0', 'x_1', 'y_1', etc.
-                for each bootstrap replicate. Row index contains sample IDs.
-        """
         # Store samples
         self.samples = samples
 
@@ -679,16 +665,10 @@ class Locator:
         self.config["nboots"] = n_bootstraps
 
         # Initial training to set up model and data
-        self.train(genotypes=genotypes, samples=samples, setup_only=True)
+        self.train(genotypes=genotypes, samples=samples)
 
-        # Create DataFrame to store all predictions if requested
-        all_predictions = (
-            pd.DataFrame(index=self.samples[self.pred_indices]) if return_df else None
-        )
-        if return_df:
-            # Add sampleID column - use the actual sample IDs
-            pred_samples = [self.samples[i] for i in self.pred_indices]
-            all_predictions.insert(0, "sampleID", pred_samples)
+        # Create lists to store predictions
+        pred_dfs = []
 
         print("starting bootstrap resampling")
 
@@ -730,19 +710,22 @@ class Locator:
             )
 
             # Get predictions
+            preds = self.predict(
+                boot=boot, verbose=False, prediction_genotypes=predgen2, return_df=True
+            )
+
             if return_df:
-                preds = self.predict(
-                    boot=boot,
-                    verbose=False,
-                    prediction_genotypes=predgen2,
-                    return_df=True,
-                )
-                all_predictions[f"x_{boot}"] = preds["x"]
-                all_predictions[f"y_{boot}"] = preds["y"]
-            else:
-                self.predict(boot=boot, verbose=False, prediction_genotypes=predgen2)
+                # Rename columns to include boot number
+                boot_preds = preds[["x", "y"]].copy()
+                boot_preds.columns = [f"x_{boot}", f"y_{boot}"]
+                pred_dfs.append(boot_preds)
 
             # Clear keras session
             keras.backend.clear_session()
 
-        return all_predictions if return_df else None
+        if return_df:
+            # Concatenate all predictions and add sampleIDs
+            all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+            return all_predictions
+
+        return None
