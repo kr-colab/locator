@@ -525,6 +525,7 @@ class Locator:
         window_size=5e5,
         window_stop=None,
         return_df=False,
+        save_full_pred_matrix=True,
     ):
         # Store samples
         self.samples = samples
@@ -570,7 +571,9 @@ class Locator:
                 self.train(genotypes=window_genos, samples=samples)
 
                 # Get predictions using self.predgen which is already properly formatted
-                preds = self.predict(return_df=True)
+                preds = self.predict(
+                    return_df=True, save_preds_to_disk=not save_full_pred_matrix
+                )
 
                 if return_df:
                     # Rename columns to include window start
@@ -584,6 +587,11 @@ class Locator:
         if return_df:
             # Concatenate all predictions and add sampleIDs
             all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+
+            if save_full_pred_matrix:
+                all_predictions.to_csv(
+                    f"{self.config['out']}_windows_predlocs.csv", index=False
+                )
             return all_predictions
 
         return None
@@ -701,7 +709,7 @@ class Locator:
         self.config["nboots"] = n_bootstraps
 
         # Initial training to set up model and data
-        self.train(genotypes=genotypes, samples=samples, setup_only=True)
+        self.train(genotypes=genotypes, samples=samples)
 
         # Create lists to store predictions
         pred_dfs = []
@@ -769,7 +777,7 @@ class Locator:
 
             if save_full_pred_matrix:
                 all_predictions.to_csv(
-                    f"{self.config['out']}_bootstrapq_predlocs.csv", index=False
+                    f"{self.config['out']}_bootstrap_predlocs.csv", index=False
                 )
             return all_predictions
 
