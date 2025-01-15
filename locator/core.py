@@ -370,7 +370,14 @@ class Locator:
 
         return self.history
 
-    def predict(self, boot=0, verbose=True, prediction_genotypes=None, return_df=False):
+    def predict(
+        self,
+        boot=0,
+        verbose=True,
+        prediction_genotypes=None,
+        return_df=False,
+        save_preds_to_disk=True,
+    ):
         """Make predictions for samples with unknown locations.
 
         Args:
@@ -380,7 +387,8 @@ class Locator:
                 Used for jacknife resampling. Defaults to None.
             return_df (bool, optional): Whether to return predictions as pandas DataFrame.
                 Defaults to False.
-
+            save_preds_to_disk (bool, optional): Whether to save predictions to disk.
+                Defaults to True.
         Returns:
             numpy.ndarray or pandas.DataFrame: Array of predicted coordinates or DataFrame with
                 x,y coordinates and sampleID columns
@@ -415,7 +423,8 @@ class Locator:
             if self.config.get("bootstrap", False) or self.config.get("jacknife", False)
             else f"{self.config['out']}_predlocs.txt"
         )
-        pred_df.to_csv(outfile, index=False)
+        if save_preds_to_disk:
+            pred_df.to_csv(outfile, index=False)
 
         if return_df:
             return pred_df
@@ -579,7 +588,14 @@ class Locator:
 
         return None
 
-    def run_jacknife(self, genotypes, samples, prop=0.05, return_df=False):
+    def run_jacknife(
+        self,
+        genotypes,
+        samples,
+        prop=0.05,
+        return_df=False,
+        save_full_pred_matrix=True,
+    ):
         """Run jacknife analysis by dropping SNPs.
 
         Args:
@@ -589,6 +605,8 @@ class Locator:
                 Defaults to 0.05.
             return_df (bool, optional): Whether to return DataFrame of all predictions.
                 Defaults to False.
+            save_full_pred_matrix (bool, optional): Whether to save the full prediction matrix.
+                Defaults to True.
 
         Returns:
             pandas.DataFrame or None: If return_df=True, returns DataFrame containing
@@ -612,8 +630,9 @@ class Locator:
                 np.isin(np.array(samples), sample_data.index[pred])
             )[0]
 
-        # Create DataFrame to store all predictions if requested
-        all_predictions = None
+        # Create lists to store predictions
+        pred_dfs = []
+        preds = None
 
         # Initial training to set up model (but don't output predictions)
         self.train(genotypes=genotypes, samples=samples)
@@ -642,19 +661,29 @@ class Locator:
 
             # Get predictions
             preds = self.predict(
-                boot=boot, verbose=False, prediction_genotypes=pg, return_df=True
+                boot=boot,
+                verbose=False,
+                prediction_genotypes=pg,
+                return_df=True,
+                save_preds_to_disk=not save_full_pred_matrix,
             )
 
-            if return_df:
-                if all_predictions is None:
-                    # Initialize DataFrame with sampleIDs from first prediction
-                    all_predictions = pd.DataFrame({"sampleID": preds["sampleID"]})
+            # Rename columns to include boot number
+            boot_preds = preds[["x", "y"]].copy()
+            boot_preds.columns = [f"x_{boot}", f"y_{boot}"]
+            pred_dfs.append(boot_preds)
 
-                # Add predictions for this replicate
-                all_predictions[f"x_{boot}"] = preds["x"]
-                all_predictions[f"y_{boot}"] = preds["y"]
+        if return_df:
+            # Concatenate all predictions and add sampleIDs
+            all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
 
-        return all_predictions if return_df else None
+            if save_full_pred_matrix:
+                all_predictions.to_csv(
+                    f"{self.config['out']}_jacknife_predlocs.csv", index=False
+                )
+            return all_predictions
+
+        return None
 
     def run_bootstraps(self, genotypes, samples, n_bootstraps=50, return_df=False):
         # Store samples
