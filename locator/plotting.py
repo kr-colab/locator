@@ -10,12 +10,14 @@ import cartopy.feature as cfeature
 from pathlib import Path
 
 
-def kde_predict(x_coords, y_coords, n_points=500):
+def kde_predict(x_coords, y_coords, xlim=(0, 50), ylim=(0, 50), n_points=100):
     """Calculate kernel density estimate of predictions
 
     Args:
         x_coords: Array of x coordinates
         y_coords: Array of y coordinates
+        xlim: Tuple of (min, max) x values for grid
+        ylim: Tuple of (min, max) y values for grid
         n_points: Number of points for density estimation grid
 
     Returns:
@@ -26,47 +28,86 @@ def kde_predict(x_coords, y_coords, n_points=500):
         positions = np.vstack([x_coords, y_coords])
         kernel = gaussian_kde(positions)
 
-        # Create grid of points
-        x_grid = np.linspace(min(x_coords), max(x_coords), n_points)
-        y_grid = np.linspace(min(y_coords), max(y_coords), n_points)
+        # Create grid of points using full plot range
+        x_grid = np.linspace(xlim[0], xlim[1], n_points)
+        y_grid = np.linspace(ylim[0], ylim[1], n_points)
         xx, yy = np.meshgrid(x_grid, y_grid)
 
         # Evaluate kernel on grid
         positions = np.vstack([xx.ravel(), yy.ravel()])
         density = np.reshape(kernel(positions).T, xx.shape)
 
-        return x_grid, y_grid, density
+        return xx, yy, density
 
-    except Exception:
-        # Return mean coordinates if KDE fails
-        return (np.mean(x_coords), np.mean(y_coords), None)
+    except Exception as e:
+        print(f"KDE failed: {e}")
+        return None, None, None
 
 
 def plot_predictions(
-    predictions,  # Can be path to file/dir or DataFrame from run functions
-    sample_data,
+    predictions,
+    locator,
     out_prefix,
     samples=None,
     n_samples=9,
     n_cols=3,
-    plot_map=True,
+    plot_map=False,
     width=5,
     height=4,
     dpi=300,
+    xlim=(0, 50),
+    ylim=(0, 50),
+    n_levels=3,
 ):
-    """Plot locator predictions
+    """Plot locator predictions from jacknife, bootstrap, or windows analyses.
+
+    This function visualizes predictions from any of locator's prediction methods:
+    - run_jacknife()
+    - run_bootstraps()
+    - run_windows()
+
+    The function expects prediction data with:
+    - A 'sampleID' column
+    - Multiple prediction columns ('x_0', 'x_1'... and 'y_0', 'y_1'...)
+
+    For each sample, the plot shows:
+    - KDE contours of predictions (blue lines)
+    - True location if known (red star)
+    - All training sample locations (gray circles)
 
     Args:
-        predictions: Path to prediction file/dir or DataFrame from run functions
-        sample_data: Path to sample data file
+        predictions: DataFrame or path to predictions file. Output from any of:
+            - locator.run_jacknife(return_df=True)
+            - locator.run_bootstraps(return_df=True)
+            - locator.run_windows(return_df=True)
+        locator: Locator instance containing training data configuration
         out_prefix: Prefix for output files
-        samples: List of sample IDs to plot (default: None)
-        n_samples: Number of random samples to plot if samples not specified
-        n_cols: Number of columns in multi-panel plot
-        plot_map: Whether to plot background map
-        width: Figure width in inches
-        height: Figure height in inches
-        dpi: Figure resolution
+        samples: List of sample IDs to plot. If None, randomly selects n_samples
+        n_samples: Number of samples to plot if samples not specified
+        n_cols: Number of columns in plot grid
+        plot_map: Whether to plot on a map (requires cartopy)
+        width: Width of each subplot
+        height: Height of each subplot
+        dpi: DPI for output figure
+        xlim: x-axis limits (min, max)
+        ylim: y-axis limits (min, max)
+        n_levels: Number of KDE contour levels to plot
+
+    Returns:
+        matplotlib figure object
+
+    Example:
+        >>> # For jacknife analysis
+        >>> predictions = locator.run_jacknife(genotypes, samples, return_df=True)
+        >>> plot_predictions(predictions, locator, "jacknife_example")
+
+        >>> # For bootstrap analysis
+        >>> predictions = locator.run_bootstraps(genotypes, samples, return_df=True)
+        >>> plot_predictions(predictions, locator, "bootstrap_example")
+
+        >>> # For windows analysis
+        >>> predictions = locator.run_windows(genotypes, samples, return_df=True)
+        >>> plot_predictions(predictions, locator, "windows_example")
     """
     # Load predictions
     if isinstance(predictions, (str, Path)):
@@ -74,78 +115,111 @@ def plot_predictions(
         if pred_path.is_file():
             preds = pd.read_csv(pred_path)
         else:
-            # Load multiple prediction files
             pred_files = list(pred_path.glob("*predlocs.txt"))
             preds = pd.concat([pd.read_csv(f) for f in pred_files])
     else:
-        # Use provided DataFrame
         preds = predictions
 
-    # Load sample data
-    if isinstance(sample_data, (str, Path)):
-        samples_df = pd.read_csv(sample_data, sep="\t")
-    else:
-        # Assume sample_data is already a DataFrame
-        samples_df = sample_data
+    # Get sample data from locator
+    samples_df = pd.read_csv(
+        locator.config["sample_data"], sep="\t", na_values="NA", quotechar='"'
+    )
+    samples_df.columns = samples_df.columns.str.strip('"')
+    if "sampleID" in samples_df.columns:
+        samples_df["sampleID"] = samples_df["sampleID"].str.strip('"')
 
-    # Select samples to plot
+    # Select samples to plot if not provided
     if samples is None:
-        samples = np.random.choice(preds["sampleID"].unique(), n_samples, replace=False)
-    elif isinstance(samples, str):
-        samples = samples.split(",")
+        available_samples = preds["sampleID"].unique()
+        samples = np.random.choice(
+            available_samples,
+            size=min(n_samples, len(available_samples)),
+            replace=False,
+        )
 
     # Create figure
     n_rows = int(np.ceil(len(samples) / n_cols))
-    fig = plt.figure(figsize=(width, height), dpi=dpi)
+    fig = plt.figure(figsize=(width * n_cols, height * n_rows), dpi=dpi)
 
     # Plot each sample
     for i, sample in enumerate(samples, 1):
-        ax = fig.add_subplot(n_rows, n_cols, i, projection=ccrs.PlateCarree())
+        ax = fig.add_subplot(
+            n_rows, n_cols, i, projection=ccrs.PlateCarree() if plot_map else None
+        )
 
         sample_preds = preds[preds["sampleID"] == sample]
-        sample_true = samples_df[samples_df["sampleID"] == sample].iloc[0]
+        sample_true = samples_df[samples_df["sampleID"] == sample]
 
         if plot_map:
             ax.add_feature(cfeature.LAND, facecolor="lightgray")
-            ax.add_feature(cfeature.OCEAN, facecolor="white")
             ax.add_feature(cfeature.COASTLINE, linewidth=0.5)
+        else:
+            ax.set_xlim(xlim)
+            ax.set_ylim(ylim)
 
-        # Plot training locations
-        ax.scatter(
-            samples_df["x"],
-            samples_df["y"],
-            c="dodgerblue",
-            marker="o",
-            s=20,
-            alpha=0.5,
-        )
-
-        # Get x and y coordinates from prediction columns
-        x_cols = [col for col in sample_preds.columns if col.startswith("x_")]
-        y_cols = [col for col in sample_preds.columns if col.startswith("y_")]
-
-        x_preds = sample_preds[x_cols].values.flatten()
-        y_preds = sample_preds[y_cols].values.flatten()
-
-        # Plot predictions
-        ax.scatter(x_preds, y_preds, c="black", s=10, alpha=0.7)
-
-        # Plot true location
-        ax.scatter(sample_true["x"], sample_true["y"], c="red", marker="*", s=100)
-
-        # Plot KDE contours
-        x_grid, y_grid, density = kde_predict(x_preds, y_preds)
-        if density is not None:
-            levels = np.percentile(density, [10, 50, 95])
-            ax.contour(
-                x_grid, y_grid, density, levels=levels, colors="black", alpha=0.5
+        # Plot all training sample locations as background
+        # Only plot samples that have true locations (not NA)
+        training_locs = samples_df[
+            pd.notna(samples_df["x"]) & pd.notna(samples_df["y"])
+        ]
+        if not training_locs.empty:
+            ax.scatter(
+                training_locs["x"],
+                training_locs["y"],
+                c="gray",
+                marker="o",
+                s=20,
+                facecolors="none",
+                alpha=0.5,
+                linewidth=0.5,
+                label="Training samples",
             )
 
-        ax.set_title(sample)
+        # Plot predictions using KDE
+        if any(col.startswith("x_") for col in preds.columns):
+            # Multiple predictions per sample (e.g., jacknife)
+            x_cols = [col for col in preds.columns if col.startswith("x_")]
+            y_cols = [col for col in preds.columns if col.startswith("y_")]
+
+            # Collect all predictions
+            x_preds = sample_preds[x_cols].values.ravel()
+            y_preds = sample_preds[y_cols].values.ravel()
+
+            # Calculate KDE using plot limits
+            xx, yy, density = kde_predict(x_preds, y_preds, xlim=xlim, ylim=ylim)
+            if density is not None:
+                # Calculate percentile-based contour levels
+                density_flat = density.ravel()
+                levels = np.percentile(density_flat[density_flat > 0], [85, 90, 95, 99])
+
+                # Plot contour lines
+                ax.contour(
+                    xx,
+                    yy,
+                    density,
+                    levels=levels,
+                    colors="blue",
+                    alpha=0.8,
+                    linewidths=0.5,
+                )
+
+        # Plot true location if it exists and is not NA
+        if len(sample_true) > 0 and pd.notna(sample_true.iloc[0]["x"]):
+            ax.scatter(
+                sample_true.iloc[0]["x"],
+                sample_true.iloc[0]["y"],
+                c="red",
+                marker="*",
+                s=100,
+                label="True",
+            )
+
+        ax.set_title(f"Sample {sample}")
 
     plt.tight_layout()
-    plt.savefig(f"{out_prefix}_predictions.png")
-    plt.close()
+    if out_prefix:
+        plt.savefig(f"{out_prefix}_predictions.pdf")
+    return fig
 
 
 def plot_error_summary(
