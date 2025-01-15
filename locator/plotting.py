@@ -9,6 +9,8 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pathlib import Path
 
+__all__ = ["kde_predict", "plot_predictions", "plot_error_summary"]
+
 
 def kde_predict(x_coords, y_coords, xlim=(0, 50), ylim=(0, 50), n_points=100):
     """Calculate kernel density estimate of predictions
@@ -223,53 +225,45 @@ def plot_predictions(
 
 
 def plot_error_summary(
-    pred_file,
+    predictions,
     sample_data,
-    out_prefix,
+    out_prefix=None,
     plot_map=True,
-    width=6,
-    height=4,
+    width=20,
+    height=10,
     dpi=300,
 ):
-    """Plot summary of prediction errors
+    """Plot summary of prediction errors from holdout analysis"""
+    # Set larger font sizes globally
+    plt.rcParams.update(
+        {
+            "font.size": 12,
+            "axes.labelsize": 14,
+            "axes.titlesize": 14,
+            "xtick.labelsize": 12,
+            "ytick.labelsize": 12,
+            "legend.fontsize": 12,
+        }
+    )
 
-    Args:
-        pred_file: Path to prediction file
-        sample_data: Path to sample data file
-        out_prefix: Prefix for output files
-        plot_map: Whether to plot background map
-        width: Figure width in inches
-        height: Figure height in inches
-        dpi: Figure resolution
-    """
-    # Load data
-    preds = pd.read_csv(pred_file)
-    samples = pd.read_csv(sample_data, sep="\t")
+    # Load sample data if path provided
+    if isinstance(sample_data, (str, Path)):
+        samples = pd.read_csv(sample_data, sep="\t")
+    else:
+        samples = sample_data
+
+    # Merge predictions with true locations
+    merged = predictions.merge(
+        samples[["sampleID", "x", "y"]], on="sampleID", suffixes=("_pred", "_true")
+    )
 
     # Calculate errors
-    errors = []
-    for _, row in samples.iterrows():
-        sample_preds = preds[preds["sampleID"] == row["sampleID"]]
-        if len(sample_preds) > 0:
-            x_grid, y_grid, density = kde_predict(sample_preds["x"], sample_preds["y"])
-            if density is not None:
-                pred_x = x_grid[density.argmax() // density.shape[1]]
-                pred_y = y_grid[density.argmax() % density.shape[1]]
-                error = np.sqrt((pred_x - row["x"]) ** 2 + (pred_y - row["y"]) ** 2)
-                errors.append(
-                    {
-                        "sampleID": row["sampleID"],
-                        "true_x": row["x"],
-                        "true_y": row["y"],
-                        "pred_x": pred_x,
-                        "pred_y": pred_y,
-                        "error": error,
-                    }
-                )
+    merged["error"] = np.sqrt(
+        (merged["x_pred"] - merged["x_true"]) ** 2
+        + (merged["y_pred"] - merged["y_true"]) ** 2
+    )
 
-    errors = pd.DataFrame(errors)
-
-    # Plot error summary
+    # Create figure
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(width, height), dpi=dpi)
 
     if plot_map:
@@ -277,27 +271,55 @@ def plot_error_summary(
         ax1.add_feature(cfeature.LAND, facecolor="lightgray")
         ax1.add_feature(cfeature.COASTLINE, linewidth=0.5)
 
-    # Plot errors on map
+    # Plot errors on map with larger colorbar font
     scatter = ax1.scatter(
-        errors["true_x"], errors["true_y"], c=errors["error"], cmap="RdYlBu_r", s=50
+        merged["x_true"],
+        merged["y_true"],
+        c=merged["error"],
+        cmap="RdYlBu_r",
+        s=20,
     )
-    plt.colorbar(scatter, ax=ax1, label="Error")
+    plt.colorbar(scatter, ax=ax1, label="Error").ax.tick_params(labelsize=12)
 
     # Plot error connections
-    for _, row in errors.iterrows():
+    for _, row in merged.iterrows():
         ax1.plot(
-            [row["true_x"], row["pred_x"]],
-            [row["true_y"], row["pred_y"]],
+            [row["x_true"], row["x_pred"]],
+            [row["y_true"], row["y_pred"]],
             "k-",
             linewidth=0.5,
             alpha=0.5,
         )
 
-    # Plot error histogram
-    sns.histplot(data=errors, x="error", ax=ax2)
-    ax2.set_xlabel("Error")
-    ax2.set_ylabel("Count")
+    # Plot error histogram with larger fonts
+    sns.histplot(data=merged, x="error", ax=ax2)
+    ax2.set_xlabel("Error", fontsize=14)
+    ax2.set_ylabel("Count", fontsize=14)
+
+    # Add summary statistics as text with larger font
+    stats_text = (
+        f"Mean error: {merged['error'].mean():.2f}\n"
+        f"Median error: {merged['error'].median():.2f}\n"
+        f"Max error: {merged['error'].max():.2f}\n"
+        f"R² (x): {np.corrcoef(merged['x_pred'], merged['x_true'])[0,1]**2:.3f}\n"
+        f"R² (y): {np.corrcoef(merged['y_pred'], merged['y_true'])[0,1]**2:.3f}"
+    )
+    ax2.text(
+        0.95,
+        0.95,
+        stats_text,
+        transform=ax2.transAxes,
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(facecolor="white", alpha=0.8),
+        fontsize=12,
+    )
 
     plt.tight_layout()
-    plt.savefig(f"{out_prefix}_error_summary.png")
+
+    if out_prefix:
+        plt.savefig(f"{out_prefix}_error_summary.png")
+
+    plt.show()
     plt.close()
+    return None
