@@ -272,6 +272,8 @@ class Locator:
         train_gen=None,
         test_gen=None,
         pred_gen=None,
+        train_locs=None,
+        test_locs=None,
         setup_only=False,
     ):
         """Train the locator model on genotype data."""
@@ -324,18 +326,24 @@ class Locator:
             self.traingen = train_gen
             self.testgen = test_gen
             self.predgen = pred_gen
-            # Get train/test indices and locations from original split
-            train = np.where(~np.isnan(normalized_locs[:, 0]))[0]
-            test = np.random.choice(
-                train,
-                round((1 - self.config.get("train_split", 0.9)) * len(train)),
-                replace=False,
-            )
-            train = np.array([x for x in train if x not in test])
-            trainlocs = normalized_locs[train]
-            testlocs = normalized_locs[test]
+            # Use provided locations if available
+            if train_locs is not None and test_locs is not None:
+                trainlocs = train_locs
+                testlocs = test_locs
+            else:
+                # Get train/test indices and locations from original split
+                train = np.where(~np.isnan(normalized_locs[:, 0]))[0]
+                test = np.random.choice(
+                    train,
+                    round((1 - self.config.get("train_split", 0.9)) * len(train)),
+                    replace=False,
+                )
+                train = np.array([x for x in train if x not in test])
+                trainlocs = normalized_locs[train]
+                testlocs = normalized_locs[test]
 
-        # Store test data for later use
+        # Store both training and test locations
+        self.trainlocs = trainlocs
         self.testlocs = testlocs
 
         # Create and train model if not already created
@@ -711,6 +719,10 @@ class Locator:
         # Initial training to set up model and data
         self.train(genotypes=genotypes, samples=samples)
 
+        # Store original locations
+        original_trainlocs = self.trainlocs
+        original_testlocs = self.testlocs
+
         # Create lists to store predictions
         pred_dfs = []
 
@@ -735,22 +747,19 @@ class Locator:
             testgen2 = testgen2[:, site_order]
             predgen2 = predgen2[:, site_order]
 
-            # Create new model
-            self.model = create_network(
-                input_shape=traingen2.shape[1],
-                width=self.config.get("width", 256),
-                n_layers=self.config.get("nlayers", 8),
-                dropout_prop=self.config.get("dropout_prop", 0.25),
-            )
+            # Clear existing model
+            self.model = None
 
-            # Train on bootstrapped data
+            # Train on bootstrapped data with original locations
             self.train(
-                genotypes=None,  # use the traingen2 set
+                genotypes=None,
                 samples=samples,
                 boot=boot,
                 train_gen=traingen2,
                 test_gen=testgen2,
                 pred_gen=predgen2,
+                train_locs=original_trainlocs,
+                test_locs=original_testlocs,
             )
 
             # Get predictions
