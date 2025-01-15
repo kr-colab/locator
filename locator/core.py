@@ -685,7 +685,14 @@ class Locator:
 
         return None
 
-    def run_bootstraps(self, genotypes, samples, n_bootstraps=50, return_df=False):
+    def run_bootstraps(
+        self,
+        genotypes,
+        samples,
+        n_bootstraps=50,
+        return_df=False,
+        save_full_pred_matrix=True,
+    ):
         # Store samples
         self.samples = samples
 
@@ -694,7 +701,7 @@ class Locator:
         self.config["nboots"] = n_bootstraps
 
         # Initial training to set up model and data
-        self.train(genotypes=genotypes, samples=samples)
+        self.train(genotypes=genotypes, samples=samples, setup_only=True)
 
         # Create lists to store predictions
         pred_dfs = []
@@ -740,7 +747,11 @@ class Locator:
 
             # Get predictions
             preds = self.predict(
-                boot=boot, verbose=False, prediction_genotypes=predgen2, return_df=True
+                boot=boot,
+                verbose=False,
+                prediction_genotypes=predgen2,
+                return_df=True,
+                save_preds_to_disk=not save_full_pred_matrix,
             )
 
             if return_df:
@@ -755,6 +766,11 @@ class Locator:
         if return_df:
             # Concatenate all predictions and add sampleIDs
             all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+
+            if save_full_pred_matrix:
+                all_predictions.to_csv(
+                    f"{self.config['out']}_bootstrap_predlocs.csv", index=False
+                )
             return all_predictions
 
         return None
