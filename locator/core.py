@@ -15,57 +15,165 @@ from .utils import normalize_locs, filter_snps
 
 
 class Locator:
-    """Main class for locator functionality"""
+    """A class for predicting geographic locations from genetic data.
+
+    This class implements a neural network approach to predict sample locations from
+    genetic data. It can handle various input formats including:
+    - Genotype data:
+        * VCF or VCF.gz files
+        * Zarr format
+        * Pandas DataFrame with samples as index, SNP positions as columns
+    - Sample location data:
+        * Tab-delimited file
+        * Pandas DataFrame
+
+    The model can be configured through a dictionary of parameters passed during
+    initialization. Sample location data can be provided either as a file path or
+    as a pandas DataFrame.
+
+    Attributes:
+        config (dict): Configuration dictionary containing model parameters
+        model (keras.Model): The neural network model (created during training)
+        history (keras.callbacks.History): Training history (available after training)
+        samples (numpy.ndarray): Sample IDs from genotype data
+        meanlong (float): Mean longitude for normalization
+        sdlong (float): Standard deviation of longitude for normalization
+        meanlat (float): Mean latitude for normalization
+        sdlat (float): Standard deviation of latitude for normalization
+
+    Example:
+        >>> # Using a file path for sample data
+        >>> locator = Locator({
+        ...     "out": "analysis_1",
+        ...     "sample_data": "samples.txt",
+        ...     "zarr": "genotypes.zarr"
+        ... })
+
+        >>> # Using a DataFrame for sample data
+        >>> locator = Locator({
+        ...     "out": "analysis_1",
+        ...     "sample_data": sample_df,  # pandas DataFrame
+        ...     "zarr": "genotypes.zarr"
+        ... })
+
+        >>> # Using DataFrames for both inputs
+        >>> # Coordinate DataFrame must have columns: sampleID, x, y
+        >>> coords_df = pd.DataFrame({
+        ...     "sampleID": ["sample1", "sample2"],
+        ...     "x": [longitude1, longitude2],
+        ...     "y": [latitude1, latitude2]
+        ... })
+        >>>
+        >>> # Genotype DataFrame has samples as index, SNP positions as columns
+        >>> geno_df = pd.DataFrame({
+        ...     1001: [0, 1],    # SNP position 1001
+        ...     2001: [1, 2],    # SNP position 2001
+        ... }, index=["sample1", "sample2"])
+        >>>
+        >>> locator = Locator({
+        ...     "out": "analysis_1",
+        ...     "sample_data": coords_df,
+        ...     "genotype_data": geno_df
+        ... })
+    """
 
     def __init__(self, config=None):
-        """Initialize Locator with configuration.
+        """Initialize Locator with configuration parameters.
 
         Args:
-            config: Optional dictionary of configuration parameters that will override defaults
-
-        Default config parameters:
-            train_split: Proportion of data to use for training (0.9)
-            out: Output file prefix ("locator_out")
-            bootstrap: Whether to run bootstrap replicates (False)
-            keras_verbose: Verbosity level for Keras (1)
-            patience: Epochs to wait before early stopping (100)
-            batch_size: Training batch size (32)
-            max_epochs: Maximum training epochs (5000)
-            min_mac: Minimum minor allele count (2)
-            max_SNPs: Maximum number of SNPs to use (None)
-            impute_missing: Whether to impute missing genotypes (False)
-            dropout_prop: Dropout proportion (0.25)
-            nlayers: Number of neural network layers (8)
-            width: Width of neural network layers (256)
+            config (dict, optional): Configuration dictionary that can include:
+                - sample_data: Path to sample data file OR pandas DataFrame with
+                    columns 'sampleID', 'x', 'y'
+                - genotype_data: Pandas DataFrame with samples as index, SNP positions
+                    as columns, and genotype counts (0,1,2) as values
+                - zarr (str): Path to zarr format genotype data
+                - vcf (str): Path to VCF format genotype data
+                - train_split (float): Proportion of data to use for training
+                - batch_size (int): Batch size for training
+                - max_epochs (int): Maximum number of training epochs
+                - patience (int): Patience for early stopping
+                - min_mac (int): Minimum minor allele count for SNP filtering
+                - max_SNPs (int): Maximum number of SNPs to use
+                - width (int): Width of neural network layers
+                - nlayers (int): Number of neural network layers
+                - dropout_prop (float): Dropout proportion
+                - keras_verbose (int): Verbosity for keras training
+                - impute_missing (bool): Whether to impute missing genotypes
+                - validation_split (float): Proportion of data to use for validation
+                - learning_rate (float): Learning rate for optimization
+                - min_epochs (int): Minimum number of epochs to train
+                - max_epochs (int): Maximum number of epochs to train
+                - patience (int): Number of epochs to wait for improvement
+                - min_delta (float): Minimum change in validation loss
+                - restore_best_weights (bool): Whether to restore best weights
+                - prediction_frequency (int): Frequency of predictions during training
         """
-        default_config = {
-            # Data splitting
+        # Set default configuration
+        self.config = {
+            # Data parameters
             "train_split": 0.9,
-            # Output
-            "out": "locator_out",
-            # Training parameters
-            "bootstrap": False,
-            "keras_verbose": 1,
-            "patience": 100,
             "batch_size": 32,
-            "max_epochs": 5000,
-            # Data processing
             "min_mac": 2,
             "max_SNPs": None,
             "impute_missing": False,
             # Network architecture
-            "dropout_prop": 0.25,
-            "nlayers": 8,
             "width": 256,
+            "nlayers": 8,
+            "dropout_prop": 0.25,
+            # Training parameters
+            "max_epochs": 5000,
+            "patience": 100,
+            "learning_rate": 0.001,
+            "min_epochs": 10,
+            "min_delta": 1e-4,
+            "restore_best_weights": True,
+            # Output control
+            "keras_verbose": 1,
+            "prediction_frequency": 1,
+            # Validation
+            "validation_split": 0.1,
         }
 
-        self.config = {**default_config, **(config or {})}
+        # Update with user config
+        if config is not None:
+            self.config.update(config)
+
+        # Handle sample_data DataFrame input
+        if isinstance(self.config.get("sample_data"), pd.DataFrame):
+            sample_df = self.config["sample_data"]
+            required_cols = ["sampleID", "x", "y"]
+            if not all(col in sample_df.columns for col in required_cols):
+                raise ValueError(
+                    f"sample_data DataFrame must contain columns: {required_cols}"
+                )
+            self._sample_data_df = sample_df.copy()
+
+        # Handle genotype_data DataFrame input
+        if isinstance(self.config.get("genotype_data"), pd.DataFrame):
+            geno_df = self.config["genotype_data"]
+            # Validate genotype values are 0,1,2
+            unique_values = np.unique(geno_df.values)
+            if not all(x in [0, 1, 2] for x in unique_values):
+                raise ValueError("Genotype values must be 0, 1, or 2")
+            # Store positions for windowed analysis
+            try:
+                self.positions = geno_df.columns.astype(float).values
+            except ValueError:
+                raise ValueError(
+                    "Column names must be convertible to integers (SNP positions)"
+                )
+            # Store DataFrame
+            self._genotype_df = geno_df.copy()
+
+        # Initialize attributes that will be set during training
         self.model = None
         self.history = None
+        self.samples = None
         self.meanlong = None
         self.sdlong = None
         self.meanlat = None
         self.sdlat = None
+        self.positions = None  # For windowed analysis
 
     def _load_from_zarr(self, zarr_path):
         """Load genotypes from zarr file.
@@ -153,29 +261,144 @@ class Locator:
         return genotypes, samples
 
     def load_genotypes(self, vcf=None, zarr=None, matrix=None):
-        """Load genotype data from various input file formats.
+        """Load genotype data from various input sources.
+
+        This method can load genotype data from:
+        1. A stored DataFrame provided during initialization
+        2. A VCF file
+        3. A zarr file
+        4. A tab-delimited matrix file
+
+        For windowed analysis, SNP positions must be available either from:
+        - Column names in the genotype DataFrame
+        - The zarr file's variants/POS array
 
         Args:
-            vcf: Path to VCF file containing genotype data
-            zarr: Path to Zarr file containing genotype data
-            matrix: Path to tab-delimited matrix file containing genotype data
+            vcf (str, optional): Path to VCF format genotype data
+            zarr (str, optional): Path to zarr format genotype data
+            matrix (str, optional): Path to tab-delimited matrix file
 
         Returns:
-            tuple: (genotypes, samples) where genotypes is an allel.GenotypeArray
-            and samples is a numpy array of sample IDs
+            tuple: (genotypes, samples) where:
+                - genotypes is an allel.GenotypeArray of shape (n_sites, n_samples, 2)
+                - samples is a numpy array of sample IDs
+
+        Examples:
+            >>> # Using stored DataFrame from initialization
+            >>> locator = Locator({
+            ...     "genotype_data": geno_df,  # DataFrame with genotypes
+            ...     "sample_data": coords_df   # DataFrame with coordinates
+            ... })
+            >>> genotypes, samples = locator.load_genotypes()
+
+            >>> # Using zarr file (recommended for windowed analysis)
+            >>> locator = Locator({"sample_data": coords_df})
+            >>> genotypes, samples = locator.load_genotypes(zarr="path/to/geno.zarr")
+
+            >>> # Using VCF file
+            >>> genotypes, samples = locator.load_genotypes(vcf="path/to/geno.vcf")
+
+            >>> # Using matrix file
+            >>> genotypes, samples = locator.load_genotypes(matrix="path/to/geno.txt")
 
         Raises:
-            ValueError: If no input file is specified
+            ValueError: If no input source is provided or if input format is invalid
         """
-        """Load genotype data from various sources"""
-        if zarr is not None:
-            return self._load_from_zarr(zarr)
+        # Use stored DataFrame if available
+        if hasattr(self, "_genotype_df"):
+            print("using stored genotype DataFrame")
+            geno_df = self._genotype_df
+            # Convert samples to Python's native str type
+            samples = np.array([str(x) for x in geno_df.index], dtype=object)
+            # Store positions for windowed analysis if not already set
+            if self.positions is None:
+                try:
+                    self.positions = geno_df.columns.astype(float).values
+                except ValueError:
+                    raise ValueError(
+                        "Column names must be convertible to integers (SNP positions)"
+                    )
+
+            # Convert DataFrame values to genotype array format
+            # Shape needs to be (n_sites, n_samples, 2) for compatibility
+            genotypes = np.zeros((geno_df.shape[1], geno_df.shape[0], 2), dtype=int)
+
+            # Convert each genotype count to allele counts
+            # e.g., 0 -> [0,0], 1 -> [1,0], 2 -> [1,1]
+            for i, count in enumerate([0, 1, 2]):
+                mask = geno_df.values.T == count
+                if count == 0:
+                    continue  # already zeros
+                elif count == 1:
+                    genotypes[mask, 0] = 1
+                else:  # count == 2
+                    genotypes[mask] = 1
+
+            return allel.GenotypeArray(genotypes), samples
+
+        # Load from zarr
+        elif zarr is not None:
+            print("reading zarr")
+            callset = zarr.open_group(zarr, mode="r")
+            gt = callset["calldata/GT"]
+            genotypes = allel.GenotypeArray(gt[:])
+            samples = callset["samples"][:]
+
+            # Store positions for windowed analysis if not already stored
+            if not hasattr(self, "positions"):
+                self.positions = callset["variants/POS"][:]
+
+            return genotypes, samples
+
+        # Load from VCF
         elif vcf is not None:
-            return self._load_from_vcf(vcf)
+            print("reading VCF")
+            vcf_data = allel.read_vcf(vcf, log=sys.stderr)
+            if vcf_data is None:
+                raise ValueError(f"Could not read VCF file: {vcf}")
+            genotypes = allel.GenotypeArray(vcf_data["calldata/GT"])
+            samples = vcf_data["samples"]
+            return genotypes, samples
+
+        # Load from matrix
         elif matrix is not None:
-            return self._load_from_matrix(matrix)
+            print("reading matrix")
+            gmat = pd.read_csv(matrix, sep="\t")
+            samples = np.array(gmat["sampleID"])
+            gmat = gmat.drop(labels="sampleID", axis=1)
+            gmat = np.array(gmat, dtype="int8")
+
+            # Convert to haplotype format
+            hmat = None
+            for i in range(gmat.shape[0]):
+                h1 = []
+                h2 = []
+                for j in range(gmat.shape[1]):
+                    count = gmat[i, j]
+                    if count == 0:
+                        h1.append(0)
+                        h2.append(0)
+                    elif count == 1:
+                        h1.append(1)
+                        h2.append(0)
+                    elif count == 2:
+                        h1.append(1)
+                        h2.append(1)
+                if i == 0:
+                    hmat = h1
+                    hmat = np.vstack((hmat, h2))
+                else:
+                    hmat = np.vstack((hmat, h1))
+                    hmat = np.vstack((hmat, h2))
+
+            genotypes = allel.HaplotypeArray(np.transpose(hmat)).to_genotypes(ploidy=2)
+            return genotypes, samples
+
         else:
-            raise ValueError("No input specified. Please provide vcf, zarr, or matrix")
+            raise ValueError(
+                "No genotype data provided. Either initialize with genotype_data DataFrame "
+                "or provide vcf/zarr/matrix path."
+            )
 
     def _split_train_test(self, genotypes, locations, train_split=0.9):
         """Split genotype and location data into training and test sets.
@@ -280,15 +503,19 @@ class Locator:
         # Store samples
         self.samples = samples
 
-        # Get sample data file path from argument or config
-        sample_data_path = sample_data_file or self.config.get("sample_data")
-        if not sample_data_path:
-            raise ValueError(
-                "sample_data file path must be provided in config or as argument"
-            )
-
         # Get sorted sample data and locations
-        sample_data, locs = self.sort_samples(samples, sample_data_path)
+        if hasattr(self, "_sample_data_df"):
+            # Use stored DataFrame
+            sample_data, locs = self.sort_samples(samples)
+        else:
+            # Use file path
+            sample_data_path = sample_data_file or self.config.get("sample_data")
+            if not isinstance(sample_data_path, str):
+                raise ValueError(
+                    "sample_data file path must be provided in config or as argument "
+                    "when not using DataFrame input"
+                )
+            sample_data, locs = self.sort_samples(samples, sample_data_file)
 
         # Normalize locations
         self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_locs = (
@@ -440,17 +667,16 @@ class Locator:
         return predictions
 
     def sort_samples(self, samples=None, sample_data_file=None):
-        """Sort samples and match with location data from a sample data file.
+        """Sort samples and match with location data.
 
-        This method reads a tab-delimited sample data file containing location coordinates,
-        matches the samples with the genotype data, and ensures the ordering is consistent.
-        The sample data file must contain columns 'sampleID', 'x', and 'y', where x and y
-        represent geographic coordinates. Sample IDs must exactly match those in the genotype data.
+        This method matches samples with their location data and ensures consistent ordering
+        between genotype and location data. It can use either a stored DataFrame from
+        initialization or a provided sample data file.
 
         Args:
             samples (numpy.ndarray): Array of sample IDs from the genotype data
-            sample_data_file (str): Path to tab-delimited file with columns 'sampleID', 'x', 'y'.
-                                  X and Y values for samples without known locations should be NA.
+            sample_data_file (str, optional): Override path to tab-delimited file with
+                columns 'sampleID', 'x', 'y'. If not provided, uses stored sample data.
 
         Returns:
             tuple: A tuple containing:
@@ -458,45 +684,40 @@ class Locator:
                 - locs (numpy.ndarray): Array of x,y coordinates for each sample
 
         Raises:
-            ValueError: If sample_data file is missing 'sampleID' column or if sample IDs
-                      don't match between genotype and sample data.
+            ValueError: If samples not provided or if no sample data available
+            ValueError: If sample IDs don't match between genotype and sample data
         """
-        """Sort samples and match with location data
+        if samples is None:
+            raise ValueError("samples must be provided")
 
-        Args:
-            samples: array of sample IDs from genotype data
-            sample_data_file: path to tab-delimited file with columns 'sampleID', 'x', 'y'
-
-        Returns:
-            tuple: (sample_data DataFrame, locations array)
-        """
-        if samples is None or sample_data_file is None:
-            raise ValueError("samples and sample_data_file must be provided")
-
-        # Read sample data file
-        sample_data = pd.read_csv(sample_data_file, sep="\t")
+        # Use stored DataFrame if available
+        if hasattr(self, "_sample_data_df"):
+            sample_data = self._sample_data_df.copy()
+        else:
+            # Get sample data file path
+            sample_data_path = sample_data_file or self.config.get("sample_data")
+            if not sample_data_path:
+                raise ValueError(
+                    "sample_data must be provided in config or as argument"
+                )
+            # Read sample data file
+            sample_data = pd.read_csv(sample_data_path, sep="\t")
 
         # Ensure sampleID column exists
         if "sampleID" not in sample_data.columns:
-            raise ValueError("sample_data file must contain 'sampleID' column")
+            raise ValueError("sample_data must contain 'sampleID' column")
 
-        # Create backup of sampleID and set as index
-        sample_data["sampleID2"] = sample_data["sampleID"]
-        sample_data.set_index("sampleID", inplace=True)
+        # Ensure consistent string type for comparison
+        sample_data = self._sample_data_df.copy()
+        # Convert the sampleID column to match the type of samples
+        sample_data["sampleID"] = sample_data["sampleID"].astype(str)
 
-        # Reindex to match genotype sample order
-        samples = samples.astype("str")
-        sample_data = sample_data.reindex(np.array(samples))
-
-        # Verify sample order matches
+        # Verify sample order matches using the correct column name
         if not all(
-            [
-                sample_data["sampleID2"].iloc[x] == samples[x]
-                for x in range(len(samples))
-            ]
+            sample_data["sampleID"].iloc[x] == samples[x] for x in range(len(samples))
         ):
             raise ValueError(
-                "Sample ordering failed! Check that sample IDs match the VCF."
+                "Sample ordering failed! Check that sample IDs match the genotype data."
             )
 
         # Extract location data
@@ -535,17 +756,33 @@ class Locator:
         return_df=False,
         save_full_pred_matrix=True,
     ):
+        """Run windowed prediction analysis.
+
+        Args:
+            genotypes: GenotypeArray containing genetic data
+            samples: Array of sample IDs
+            window_start: Start position for windows (default: 0)
+            window_size: Size of windows in base pairs (default: 500kb)
+            window_stop: Stop position for windows (default: None)
+            ...
+        """
         # Store samples
         self.samples = samples
 
-        # Get positions from zarr
+        # Get positions if not already stored
         if not hasattr(self, "positions"):
-            if not self.config.get("zarr"):
+            if hasattr(self, "_genotype_df"):
+                # Use positions from DataFrame columns
+                self.positions = np.array(self._genotype_df.columns, dtype=int)
+            elif self.config.get("zarr"):
+                # Get positions from zarr file
+                callset = zarr.open_group(self.config["zarr"], mode="r")
+                self.positions = callset["variants/POS"][:]
+            else:
                 raise ValueError(
-                    "zarr path must be provided in config for windowed analysis"
+                    "SNP positions required for windowed analysis. Use zarr input or "
+                    "genotype DataFrame with position-labeled columns."
                 )
-            callset = zarr.open_group(self.config["zarr"], mode="r")
-            self.positions = callset["variants/POS"][:]
 
         if window_stop is None:
             window_stop = max(self.positions)
@@ -813,13 +1050,16 @@ class Locator:
         # Store samples
         self.samples = samples
 
-        # Get sample data file path
-        sample_data_path = self.config.get("sample_data")
-        if not sample_data_path:
-            raise ValueError("sample_data file path must be provided in config")
-
-        # Get sorted sample data and locations
-        sample_data, locs = self.sort_samples(samples, sample_data_path)
+        # Get sample data and locations
+        if hasattr(self, "_sample_data_df"):
+            # Use stored DataFrame
+            sample_data, locs = self.sort_samples(samples)
+        else:
+            # Use file path
+            sample_data_path = self.config.get("sample_data")
+            if not sample_data_path:
+                raise ValueError("sample_data file path must be provided in config")
+            sample_data, locs = self.sort_samples(samples, sample_data_path)
 
         # Get indices of samples with known locations
         known_idx = np.argwhere(~np.isnan(locs[:, 0]))
@@ -998,13 +1238,16 @@ class Locator:
         # Store samples
         self.samples = samples
 
-        # Get sample data
-        sample_data_path = self.config.get("sample_data")
-        if not sample_data_path:
-            raise ValueError("sample_data file path must be provided in config")
-
-        # Get sorted sample data and locations
-        sample_data, locs = self.sort_samples(samples, sample_data_path)
+        # Get sample data and locations
+        if hasattr(self, "_sample_data_df"):
+            # Use stored DataFrame
+            sample_data, locs = self.sort_samples(samples)
+        else:
+            # Use file path
+            sample_data_path = self.config.get("sample_data")
+            if not sample_data_path:
+                raise ValueError("sample_data file path must be provided in config")
+            sample_data, locs = self.sort_samples(samples, sample_data_path)
 
         # Get indices of samples with known locations
         known_idx = np.argwhere(~np.isnan(locs[:, 0]))
@@ -1033,7 +1276,9 @@ class Locator:
 
             # Get predictions for holdout samples
             preds = self.predict_holdout(
-                return_df=True, save_preds_to_disk=not save_full_pred_matrix
+                return_df=True,
+                save_preds_to_disk=not save_full_pred_matrix,
+                verbose=self.config.get("keras_verbose", 1),
             )
 
             if return_df:
