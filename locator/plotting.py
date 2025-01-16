@@ -221,7 +221,8 @@ def plot_predictions(
     plt.tight_layout()
     if out_prefix:
         plt.savefig(f"{out_prefix}_predictions.pdf")
-    return fig
+    plt.show()
+    return None
 
 
 def plot_error_summary(

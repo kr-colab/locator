@@ -1054,3 +1054,87 @@ class Locator:
             return all_predictions
 
         return None
+
+    def run_jacknife_holdouts(
+        self,
+        genotypes,
+        samples,
+        k=10,
+        holdout_indices=None,
+        jacknife_prop=0.05,
+        n_replicates=100,
+        return_df=True,
+    ):
+        """Run jacknife analysis on predictions for held out samples.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            k: Number of samples to hold out (ignored if holdout_indices provided)
+            holdout_indices: Optional specific indices of samples to hold out
+            jacknife_prop: Proportion of sites to mask in each jacknife replicate
+            n_replicates: Number of jacknife replicates to run
+            return_df: Whether to return results as DataFrame
+
+        Returns:
+            pandas DataFrame with columns:
+                - sampleID: Sample identifier
+                - x_0...x_n: Longitude predictions for n jacknife replicates
+                - y_0...y_n: Latitude predictions for n jacknife replicates
+        """
+        # First train model without holdout samples
+        self.train_holdout(
+            genotypes=genotypes, samples=samples, k=k, holdout_indices=holdout_indices
+        )
+
+        # Calculate allele frequencies from training data
+        af = []
+        for i in range(self.holdout_gen.shape[1]):
+            af.append(np.sum(self.traingen[:, i]) / (self.traingen.shape[0] * 2))
+        af = np.array(af)
+
+        # Store predictions for each replicate
+        predictions_x = []
+        predictions_y = []
+
+        # Run jacknife replicates
+        for rep in tqdm(range(n_replicates), desc="Running jacknife replicates"):
+            # Copy holdout genotypes
+            masked_gen = self.holdout_gen.copy()
+
+            # Randomly mask sites
+            sites_to_mask = np.random.choice(
+                masked_gen.shape[1],
+                size=int(masked_gen.shape[1] * jacknife_prop),
+                replace=False,
+            )
+
+            # Replace masked sites with random draws from allele frequencies
+            for site in sites_to_mask:
+                masked_gen[:, site] = np.random.binomial(
+                    2, af[site], masked_gen.shape[0]
+                )
+
+            # Get predictions for masked data
+            pred = self.model.predict(masked_gen)
+
+            # Denormalize predictions
+            pred_x = pred[:, 0] * self.sdlong + self.meanlong
+            pred_y = pred[:, 1] * self.sdlat + self.meanlat
+
+            predictions_x.append(pred_x)
+            predictions_y.append(pred_y)
+
+        if return_df:
+            # Create output DataFrame
+            results = pd.DataFrame()
+            results["sampleID"] = self.samples[self.holdout_idx]
+
+            # Add predictions for each replicate
+            for i in range(n_replicates):
+                results[f"x_{i}"] = predictions_x[i]
+                results[f"y_{i}"] = predictions_y[i]
+
+            return results
+
+        return predictions_x, predictions_y
