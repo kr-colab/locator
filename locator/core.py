@@ -1387,7 +1387,7 @@ class Locator:
             # Replace masked sites with random draws from allele frequencies
             for site in sites_to_mask:
                 masked_gen[:, site] = np.random.binomial(
-                    2, af[site], masked_gen.shape[0]
+                    2, af[site], size=masked_gen.shape[0]
                 )
 
             # Get predictions for masked data
@@ -1413,6 +1413,266 @@ class Locator:
             return results
 
         return predictions_x, predictions_y
+
+    def run_windows_holdouts(
+        self,
+        genotypes,
+        samples,
+        k=10,
+        holdout_indices=None,
+        window_start=0,
+        window_size=5e5,
+        window_step=None,
+        window_stop=None,
+        return_df=True,
+        save_full_pred_matrix=True,
+    ):
+        """Run windowed analysis on predictions for held out samples.
+
+        This function combines windowed analysis with holdout prediction. For each window
+        of SNPs defined by physical position:
+        1. Holds out k samples from training
+        2. Trains a new model using only SNPs in the current window
+        3. Predicts locations for held-out samples using only those SNPs
+
+        Windows are defined by physical position in the genome, with a default size
+        of 500kb. SNPs are included in a window if their position falls within the
+        window boundaries.
+
+        Args:
+            genotypes: Array of genotype data
+            samples: Sample IDs corresponding to genotypes
+            k: Number of samples to hold out (ignored if holdout_indices provided)
+            holdout_indices: Optional specific indices of samples to hold out
+            window_start: Start position for windows (default: 0)
+            window_size: Size of windows in base pairs (default: 500kb)
+            window_step: Step size between windows in base pairs (default: window_size)
+            window_stop: Stop position for windows (default: max position)
+            return_df: Whether to return results as DataFrame
+            save_full_pred_matrix: Whether to save the full prediction matrix to disk
+
+        Returns:
+            pandas DataFrame with columns:
+                - sampleID: Sample identifier
+                - x_0...x_n: Longitude predictions for n windows
+                - y_0...y_n: Latitude predictions for n windows
+                Each x_i, y_i pair represents predictions from a different genomic window
+        """
+        # Store samples
+        self.samples = samples
+
+        # Get sample data and locations
+        if hasattr(self, "_sample_data_df"):
+            sample_data, locs = self.sort_samples(samples)
+        else:
+            sample_data_path = self.config.get("sample_data")
+            if not sample_data_path:
+                raise ValueError("sample_data file path must be provided in config")
+            sample_data, locs = self.sort_samples(samples, sample_data_path)
+
+        # Get indices of samples with known locations
+        known_idx = np.argwhere(~np.isnan(locs[:, 0]))
+        known_idx = np.array([x[0] for x in known_idx])
+
+        # Set holdout indices
+        if holdout_indices is not None:
+            if not all(idx in known_idx for idx in holdout_indices):
+                raise ValueError(
+                    "All holdout_indices must be indices of samples with known locations"
+                )
+            holdout_idx = np.array(holdout_indices)
+        else:
+            if k >= len(known_idx):
+                raise ValueError(
+                    f"k ({k}) must be less than number of samples with known locations ({len(known_idx)})"
+                )
+            holdout_idx = np.random.choice(known_idx, k, replace=False)
+
+        # Create mask for non-holdout samples
+        mask = np.ones(len(locs), dtype=bool)
+        mask[holdout_idx] = False
+        train_idx = known_idx[~np.isin(known_idx, holdout_idx)]
+
+        # Filter SNPs
+        filtered_genotypes = filter_snps(
+            genotypes,
+            min_mac=self.config.get("min_mac", 2),
+            max_snps=self.config.get("max_SNPs"),
+            impute=self.config.get("impute_missing", False),
+        )
+
+        # Get and filter positions to match filtered genotypes
+        if hasattr(self, "_genotype_df"):
+            all_positions = np.array(self._genotype_df.columns, dtype=int)
+            # Only keep positions for SNPs that passed filtering
+            self.positions = all_positions[: filtered_genotypes.shape[0]]
+        elif self.config.get("zarr"):
+            callset = zarr.open_group(self.config["zarr"], mode="r")
+            all_positions = callset["variants/POS"][:]
+            # Only keep positions for SNPs that passed filtering
+            self.positions = all_positions[: filtered_genotypes.shape[0]]
+        else:
+            raise ValueError(
+                "SNP positions required for windowed analysis. Use zarr input or "
+                "genotype DataFrame with position-labeled columns."
+            )
+
+        # Split remaining samples into train/test
+        test_size = round((1 - self.config.get("train_split", 0.9)) * len(train_idx))
+        test_idx = np.random.choice(train_idx, test_size, replace=False)
+        train_idx_final = np.array([x for x in train_idx if x not in test_idx])
+
+        # Store original data
+        original_traingen = np.transpose(filtered_genotypes[:, train_idx_final])
+        original_testgen = np.transpose(filtered_genotypes[:, test_idx])
+        original_holdoutgen = np.transpose(filtered_genotypes[:, holdout_idx])
+
+        # Normalize locations using only training data
+        train_locs = locs[train_idx_final]
+        self.meanlong, self.sdlong, self.meanlat, self.sdlat, normalized_train_locs = (
+            normalize_locs(train_locs)
+        )
+
+        # Normalize test and holdout locations using same parameters
+        test_locs = locs[test_idx]
+        normalized_test_locs = np.array(
+            [
+                [
+                    (x[0] - self.meanlong) / self.sdlong,
+                    (x[1] - self.meanlat) / self.sdlat,
+                ]
+                for x in test_locs
+            ]
+        )
+
+        holdout_locs = locs[holdout_idx]
+        normalized_holdout_locs = np.array(
+            [
+                [
+                    (x[0] - self.meanlong) / self.sdlong,
+                    (x[1] - self.meanlat) / self.sdlat,
+                ]
+                for x in holdout_locs
+            ]
+        )
+
+        # Set window parameters
+        if window_stop is None:
+            window_stop = max(self.positions)
+        if window_step is None:
+            window_step = window_size
+
+        # Create windows based on physical positions
+        windows = range(int(window_start), int(window_stop), int(window_step))
+        print(f"Analyzing windows of size {window_size} bp")
+
+        # Store predictions for each window
+        pred_dfs = []
+        preds = None
+
+        # Run predictions for each window
+        for window_idx, start_pos in enumerate(tqdm(windows)):
+            stop_pos = start_pos + int(window_size)
+
+            # Get SNPs in this window
+            in_window = (self.positions >= start_pos) & (self.positions < stop_pos)
+
+            if sum(in_window) > 0:
+                # Create windowed copies of data
+                self.traingen = np.zeros_like(original_traingen)
+                self.testgen = np.zeros_like(original_testgen)
+                self.holdout_gen = np.zeros_like(original_holdoutgen)
+
+                # Copy only SNPs in current window
+                self.traingen[:, in_window] = original_traingen[:, in_window]
+                self.testgen[:, in_window] = original_testgen[:, in_window]
+                self.holdout_gen[:, in_window] = original_holdoutgen[:, in_window]
+
+                # Store training and test data
+                self.trainlocs = normalized_train_locs
+                self.testlocs = normalized_test_locs
+                self.holdout_locs = normalized_holdout_locs
+                self.holdout_idx = holdout_idx
+
+                # Create new model
+                self.model = create_network(
+                    input_shape=self.traingen.shape[1],
+                    width=self.config.get("width", 256),
+                    n_layers=self.config.get("nlayers", 8),
+                    dropout_prop=self.config.get("dropout_prop", 0.25),
+                )
+
+                # Train model using only SNPs in current window
+                callbacks = self._create_callbacks()
+                self.history = self.model.fit(
+                    self.traingen,
+                    self.trainlocs,
+                    epochs=self.config.get("max_epochs", 5000),
+                    batch_size=self.config.get("batch_size", 32),
+                    shuffle=True,
+                    verbose=False,
+                    validation_data=(self.testgen, self.testlocs),
+                    callbacks=callbacks,
+                )
+
+                # Get predictions for holdout samples
+                predictions = self.model.predict(self.holdout_gen, verbose=False)
+
+                # Create output dataframe
+                pred_df = pd.DataFrame(predictions, columns=["x", "y"])
+                pred_df["sampleID"] = self.samples[self.holdout_idx]
+
+                # Denormalize predictions
+                pred_df["x"] = pred_df["x"] * self.sdlong + self.meanlong
+                pred_df["y"] = pred_df["y"] * self.sdlat + self.meanlat
+
+                if return_df:
+                    # Rename columns to include window positions
+                    boot_preds = pred_df[["x", "y"]].copy()
+                    boot_preds.columns = [f"x_pos{start_pos}", f"y_pos{start_pos}"]
+                    pred_dfs.append(boot_preds)
+
+                # Save individual window predictions if not saving full matrix
+                if not save_full_pred_matrix:
+                    filename = f"{self.config['out']}_window{window_idx}_pos{start_pos}-{stop_pos}_predlocs.csv"
+                    pred_df.to_csv(filename, index=False)
+
+                # Store last predictions for return_df=False case
+                preds = pred_df
+
+                # Clear keras session
+                keras.backend.clear_session()
+
+        if return_df:
+            # Concatenate all predictions and add sampleIDs
+            all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+
+            if save_full_pred_matrix:
+                all_predictions.to_csv(
+                    f"{self.config['out']}_allwindows_predlocs.csv", index=False
+                )
+
+                # Save window information
+                window_info = pd.DataFrame(
+                    {
+                        "window_start": [w for w in windows],
+                        "window_stop": [w + int(window_size) for w in windows],
+                        "n_snps": [
+                            sum(
+                                (self.positions >= w)
+                                & (self.positions < w + window_size)
+                            )
+                            for w in windows
+                        ],
+                    }
+                )
+                window_info.to_csv(
+                    f"{self.config['out']}_window_positions.csv", index=False
+                )
+
+            return all_predictions
+
+        return preds
 
     def _repr_html_(self):
         """Return HTML representation of Locator instance for Jupyter notebooks."""
