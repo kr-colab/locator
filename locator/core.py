@@ -1173,6 +1173,7 @@ class Locator:
         verbose=True,
         return_df=False,
         save_preds_to_disk=True,
+        plot_summary=True,
     ):
         """Predict locations for held out samples.
 
@@ -1180,6 +1181,7 @@ class Locator:
             verbose: Print progress and metrics
             return_df: Return predictions as pandas DataFrame
             save_preds_to_disk: Save predictions to disk
+            plot_summary: Display error summary plot in notebook (only if return_df=True)
 
         Returns:
             If return_df is True, returns pandas DataFrame with predictions
@@ -1206,9 +1208,36 @@ class Locator:
             pred_df.to_csv(f"{self.config['out']}_holdout_predlocs.csv", index=False)
 
         if return_df:
+            # If we're in a notebook and plot_summary is True, display the error plot
+            try:
+                from IPython.display import display
+                import matplotlib.pyplot as plt
+                from .plotting import plot_error_summary
+
+                if plot_summary:
+                    # Get sample data
+                    if hasattr(self, "_sample_data_df"):
+                        sample_data = self._sample_data_df
+                    else:
+                        sample_data = pd.read_csv(self.config["sample_data"], sep="\t")
+
+                    # Create and display plot
+                    plot_error_summary(
+                        predictions=pred_df,
+                        sample_data=sample_data,
+                        plot_map=True,
+                        width=15,
+                        height=5,
+                        out_prefix=self.config.get("out"),
+                    )
+
+            except ImportError:
+                # Not in a notebook, skip plotting
+                pass
+
             return pred_df
 
-        return None
+        return predictions
 
     def run_holdouts(
         self,
@@ -1383,3 +1412,141 @@ class Locator:
             return results
 
         return predictions_x, predictions_y
+
+    def _repr_html_(self):
+        """Return HTML representation of Locator instance for Jupyter notebooks."""
+        html = [
+            "<div style='font-family: monospace'>",
+            "<h3>Locator Model</h3>",
+            "<table>",
+            "<tr><th style='text-align:left; padding:5px'>Configuration</th><th style='text-align:left; padding:5px'>Value</th></tr>",
+        ]
+
+        # Add key configuration parameters
+        key_params = [
+            "train_split",
+            "batch_size",
+            "min_mac",
+            "max_SNPs",
+            "width",
+            "nlayers",
+            "dropout_prop",
+            "max_epochs",
+        ]
+
+        for param in key_params:
+            if param in self.config:
+                html.append(
+                    f"<tr><td style='padding:5px'>{param}</td>"
+                    f"<td style='padding:5px'>{self.config[param]}</td></tr>"
+                )
+
+        html.append("</table>")
+
+        # Add model status
+        html.append("<h4>Status:</h4>")
+        html.append("<ul>")
+
+        # Model trained status and training history
+        if self.model is not None:
+            html.append("<li>Model: Trained ✓</li>")
+            if hasattr(self, "traingen"):
+                html.append(f"<li>Training samples: {self.traingen.shape[0]}</li>")
+                html.append(f"<li>Features: {self.traingen.shape[1]}</li>")
+
+            # Add training history if available
+            if hasattr(self, "history") and self.history is not None:
+                # Create figure
+                fig, ax = plt.subplots(figsize=(8, 4))
+                hist = self.history.history
+
+                # Plot training and validation loss
+                ax.plot(hist["loss"], label="Training Loss")
+                ax.plot(hist["val_loss"], label="Validation Loss")
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel("Loss")
+                ax.legend()
+
+                # Get final validation loss
+                final_val_loss = hist["val_loss"][-1]
+
+                # Convert plot to base64 string
+                import io
+                import base64
+
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight")
+                buf.seek(0)
+                plot_data = base64.b64encode(buf.getvalue()).decode("utf-8")
+                plt.close(fig)
+
+                # Add plot and metrics to HTML
+                html.append("</ul>")  # Close the status list
+                html.append("<h4>Training History:</h4>")
+                html.append(f"<p>Final validation loss: {final_val_loss:.4f}</p>")
+                html.append(
+                    f'<img src="data:image/png;base64,{plot_data}" style="max-width:100%">'
+                )
+                html.append("<ul>")  # Reopen list for remaining items
+        else:
+            html.append("<li>Model: Not trained</li>")
+
+        # Location normalization status
+        if all(
+            x is not None
+            for x in [self.meanlong, self.sdlong, self.meanlat, self.sdlat]
+        ):
+            html.append("<li>Location normalization: Computed ✓</li>")
+        else:
+            html.append("<li>Location normalization: Not computed</li>")
+
+        # Sample data status
+        if hasattr(self, "_sample_data_df"):
+            html.append(
+                f"<li>Sample data loaded: {len(self._sample_data_df)} samples</li>"
+            )
+        elif "sample_data" in self.config:
+            html.append("<li>Sample data: Path provided</li>")
+        else:
+            html.append("<li>Sample data: Not provided</li>")
+
+        # Genotype data status
+        if hasattr(self, "_genotype_df"):
+            html.append(
+                f"<li>Genotype data loaded: {self._genotype_df.shape[1]} SNPs</li>"
+            )
+        elif any(x in self.config for x in ["zarr", "vcf", "genotype_data"]):
+            html.append("<li>Genotype data: Path provided</li>")
+        else:
+            html.append("<li>Genotype data: Not provided</li>")
+
+        # Add holdout information
+        if hasattr(self, "holdout_idx") and self.samples is not None:
+            n_holdout = len(self.holdout_idx)
+            html.append(f"<li>Holdout samples: {n_holdout} samples held out</li>")
+            # Add collapsible list of held out sample IDs
+            if n_holdout > 0:
+                sample_list = self.samples[self.holdout_idx]
+                html.append("<li>Held out samples: <details>")
+                html.append("<summary>Click to show/hide</summary>")
+                html.append("<ul style='max-height:200px;overflow-y:auto'>")
+                for sample in sample_list:
+                    html.append(f"<li>{sample}</li>")
+                html.append("</ul></details></li>")
+        elif hasattr(self, "pred_indices") and self.samples is not None:
+            n_holdout = len(self.pred_indices)
+            html.append(f"<li>Prediction samples: {n_holdout} samples held out</li>")
+            # Add collapsible list of held out sample IDs
+            if n_holdout > 0:
+                sample_list = self.samples[self.pred_indices]
+                html.append("<li>Held out samples: <details>")
+                html.append("<summary>Click to show/hide</summary>")
+                html.append("<ul style='max-height:200px;overflow-y:auto'>")
+                for sample in sample_list:
+                    html.append(f"<li>{sample}</li>")
+                html.append("</ul></details></li>")
+
+        html.append("</ul>")
+        html.append("</div>")
+
+        return "".join(html)
