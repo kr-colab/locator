@@ -8,6 +8,7 @@ from scipy.stats import gaussian_kde
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pathlib import Path
+from geopy.distance import geodesic
 
 __all__ = ["kde_predict", "plot_predictions", "plot_error_summary"]
 
@@ -236,8 +237,21 @@ def plot_error_summary(
     width=20,
     height=10,
     dpi=300,
+    use_geodesic=True,
 ):
-    """Plot summary of prediction errors from holdout analysis"""
+    """Plot summary of prediction errors from holdout analysis
+
+    Args:
+        predictions: DataFrame of predictions
+        sample_data: DataFrame or path to sample locations
+        out_prefix: Prefix for output files
+        plot_map: Whether to plot on a map
+        width: Figure width
+        height: Figure height
+        dpi: Figure resolution
+        use_geodesic: Whether to calculate errors using geodesic distance (km)
+                     instead of Euclidean distance in coordinate space
+    """
     # Set larger font sizes globally
     plt.rcParams.update(
         {
@@ -262,68 +276,203 @@ def plot_error_summary(
     )
 
     # Calculate errors
-    merged["error"] = np.sqrt(
-        (merged["x_pred"] - merged["x_true"]) ** 2
-        + (merged["y_pred"] - merged["y_true"]) ** 2
-    )
+    if use_geodesic:
+        # Calculate geodesic distance in kilometers
+        merged["error"] = merged.apply(
+            lambda row: geodesic(
+                (row["y_true"], row["x_true"]),  # (lat, lon) for true location
+                (row["y_pred"], row["x_pred"]),  # (lat, lon) for predicted location
+            ).kilometers,
+            axis=1,
+        )
+        error_units = "km"
+    else:
+        # Original Euclidean distance in coordinate space
+        merged["error"] = np.sqrt(
+            (merged["x_pred"] - merged["x_true"]) ** 2
+            + (merged["y_pred"] - merged["y_true"]) ** 2
+        )
+        error_units = "coordinate units"
 
     # Create figure
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(width, height), dpi=dpi)
-
     if plot_map:
-        ax1 = plt.subplot(121, projection=ccrs.PlateCarree())
+        # Create figure with gridspec to have more control over the layout
+        fig = plt.figure(figsize=(width, height), dpi=dpi)
+        # Make the map panel twice as wide as the histogram
+        gs = fig.add_gridspec(1, 3)  # Using 3 units total width
+
+        # Create left panel (map + colorbar) without frame - spans 2 units
+        ax1 = fig.add_subplot(gs[0:2], projection=ccrs.PlateCarree())
+        # ax1.set_frame_on(False)  # Remove outer frame
+        ax1.set_xticks([])
+        ax1.set_yticks([])
+
         ax1.add_feature(cfeature.LAND, facecolor="lightgray")
         ax1.add_feature(cfeature.COASTLINE, linewidth=0.5)
 
-    # Plot errors on map with larger colorbar font
-    scatter = ax1.scatter(
-        merged["x_true"],
-        merged["y_true"],
-        c=merged["error"],
-        cmap="RdYlBu_r",
-        s=20,
-    )
-    plt.colorbar(scatter, ax=ax1, label="Error").ax.tick_params(labelsize=12)
+        # Add frame back to the map itself
+        ax1.spines["geo"].set_visible(True)
 
-    # Plot error connections
-    for _, row in merged.iterrows():
-        ax1.plot(
-            [row["x_true"], row["x_pred"]],
-            [row["y_true"], row["y_pred"]],
-            "k-",
-            linewidth=0.5,
-            alpha=0.5,
+        # Calculate bounds with some padding
+        x_min, x_max = merged["x_true"].min(), merged["x_true"].max()
+        y_min, y_max = merged["y_true"].min(), merged["y_true"].max()
+        padding = 0.1
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+
+        # Set map extent
+        ax1.set_extent(
+            [
+                x_min - x_range * padding,
+                x_max + x_range * padding,
+                y_min - y_range * padding,
+                y_max + y_range * padding,
+            ]
         )
 
-    # Plot error histogram with larger fonts
-    sns.histplot(data=merged, x="error", ax=ax2)
-    ax2.set_xlabel("Error", fontsize=14)
-    ax2.set_ylabel("Count", fontsize=14)
+        # Plot scatter and get colorbar
+        scatter = ax1.scatter(
+            merged["x_true"],
+            merged["y_true"],
+            c=merged["error"],
+            cmap="RdYlBu_r",
+            s=20,
+        )
 
-    # Add summary statistics as text with larger font
-    stats_text = (
-        f"Mean error: {merged['error'].mean():.2f}\n"
-        f"Median error: {merged['error'].median():.2f}\n"
-        f"Max error: {merged['error'].max():.2f}\n"
-        f"R² (x): {np.corrcoef(merged['x_pred'], merged['x_true'])[0,1]**2:.3f}\n"
-        f"R² (y): {np.corrcoef(merged['y_pred'], merged['y_true'])[0,1]**2:.3f}"
-    )
-    ax2.text(
-        0.95,
-        0.95,
-        stats_text,
-        transform=ax2.transAxes,
-        verticalalignment="top",
-        horizontalalignment="right",
-        bbox=dict(facecolor="white", alpha=0.8),
-        fontsize=12,
-    )
+        # Add colorbar without frame
+        cbar = plt.colorbar(scatter, ax=ax1, label=f"Error ({error_units})")
+        cbar.outline.set_visible(False)
 
-    plt.tight_layout()
+        # Create right panel (histogram) - spans 1 unit
+        ax2 = fig.add_subplot(gs[2])
 
-    if out_prefix:
-        plt.savefig(f"{out_prefix}_error_summary.png")
+        # Plot error connections
+        for _, row in merged.iterrows():
+            ax1.plot(
+                [row["x_true"], row["x_pred"]],
+                [row["y_true"], row["y_pred"]],
+                "k-",
+                linewidth=0.5,
+                alpha=0.5,
+            )
 
-    plt.show()
-    plt.close()
+        # Plot error histogram with larger fonts
+        sns.histplot(data=merged, x="error", ax=ax2)
+        ax2.set_xlabel(f"Error ({error_units})", fontsize=14)
+        ax2.set_ylabel("Count", fontsize=14)
+
+        # Add summary statistics as text with larger font
+        stats_text = (
+            f"Mean error: {merged['error'].mean():.2f} {error_units}\n"
+            f"Median error: {merged['error'].median():.2f} {error_units}\n"
+            f"Max error: {merged['error'].max():.2f} {error_units}\n"
+            f"R² (x): {np.corrcoef(merged['x_pred'], merged['x_true'])[0,1]**2:.3f}\n"
+            f"R² (y): {np.corrcoef(merged['y_pred'], merged['y_true'])[0,1]**2:.3f}"
+        )
+        ax2.text(
+            0.95,
+            0.95,
+            stats_text,
+            transform=ax2.transAxes,
+            verticalalignment="top",
+            horizontalalignment="right",
+            bbox=dict(facecolor="white", alpha=0.8),
+            fontsize=12,
+        )
+
+        plt.tight_layout()
+
+        if out_prefix:
+            plt.savefig(f"{out_prefix}_error_summary.png")
+
+        plt.show()
+        plt.close()
+    else:
+        # Create figure
+        fig = plt.figure(figsize=(width, height), dpi=dpi)
+        gs = fig.add_gridspec(1, 2)
+
+        # Create left panel (map + colorbar) without frame
+        ax1 = fig.add_subplot(gs[0], projection=ccrs.PlateCarree())
+        ax1.set_frame_on(False)
+        ax1.set_xticks([])
+        ax1.set_yticks([])
+
+        ax1.add_feature(cfeature.LAND, facecolor="lightgray")
+        ax1.add_feature(cfeature.COASTLINE, linewidth=0.5)
+
+        # Calculate bounds with some padding
+        x_min, x_max = merged["x_true"].min(), merged["x_true"].max()
+        y_min, y_max = merged["y_true"].min(), merged["y_true"].max()
+        padding = 0.1
+        x_range = x_max - x_min
+        y_range = y_max - y_min
+
+        # Set map extent
+        ax1.set_extent(
+            [
+                x_min - x_range * padding,
+                x_max + x_range * padding,
+                y_min - y_range * padding,
+                y_max + y_range * padding,
+            ]
+        )
+
+        # Plot scatter and get colorbar
+        scatter = ax1.scatter(
+            merged["x_true"],
+            merged["y_true"],
+            c=merged["error"],
+            cmap="RdYlBu_r",
+            s=20,
+        )
+
+        # Add colorbar without frame
+        cbar = plt.colorbar(scatter, ax=ax1, label=f"Error ({error_units})")
+        cbar.outline.set_visible(False)
+
+        # Create right panel (histogram)
+        ax2 = fig.add_subplot(gs[1])
+
+        # Plot error connections
+        for _, row in merged.iterrows():
+            ax1.plot(
+                [row["x_true"], row["x_pred"]],
+                [row["y_true"], row["y_pred"]],
+                "k-",
+                linewidth=0.5,
+                alpha=0.5,
+            )
+
+        # Plot error histogram with larger fonts
+        sns.histplot(data=merged, x="error", ax=ax2)
+        ax2.set_xlabel(f"Error ({error_units})", fontsize=14)
+        ax2.set_ylabel("Count", fontsize=14)
+
+        # Add summary statistics as text with larger font
+        stats_text = (
+            f"Mean error: {merged['error'].mean():.2f} {error_units}\n"
+            f"Median error: {merged['error'].median():.2f} {error_units}\n"
+            f"Max error: {merged['error'].max():.2f} {error_units}\n"
+            f"R² (x): {np.corrcoef(merged['x_pred'], merged['x_true'])[0,1]**2:.3f}\n"
+            f"R² (y): {np.corrcoef(merged['y_pred'], merged['y_true'])[0,1]**2:.3f}"
+        )
+        ax2.text(
+            0.95,
+            0.95,
+            stats_text,
+            transform=ax2.transAxes,
+            verticalalignment="top",
+            horizontalalignment="right",
+            bbox=dict(facecolor="white", alpha=0.8),
+            fontsize=12,
+        )
+
+        plt.tight_layout()
+
+        if out_prefix:
+            plt.savefig(f"{out_prefix}_error_summary.png")
+
+        plt.show()
+        plt.close()
     return None

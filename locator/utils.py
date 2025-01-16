@@ -38,9 +38,22 @@ def replace_md(genotypes):
     return ac
 
 
-def filter_snps(genotypes, min_mac=1, max_snps=None, impute=False):
-    """Filter SNPs based on criteria"""
-    print("filtering SNPs")
+def filter_snps(genotypes, min_mac=1, max_snps=None, impute=False, verbose=False):
+    """Filter SNPs based on criteria.
+
+    Args:
+        genotypes: GenotypeArray to filter
+        min_mac (int): Minimum minor allele count for filtering
+        max_snps (int, optional): Maximum number of SNPs to retain
+        impute (bool): Whether to impute missing data
+        verbose (bool): Whether to print progress messages. Defaults to True.
+
+    Returns:
+        numpy.ndarray: Filtered allele counts array
+    """
+    if verbose:
+        print("filtering SNPs")
+
     tmp = genotypes.count_alleles()
     biallel = tmp.is_biallelic()
     genotypes = genotypes[biallel, :, :]
@@ -58,8 +71,10 @@ def filter_snps(genotypes, min_mac=1, max_snps=None, impute=False):
     if max_snps is not None:
         ac = ac[np.random.choice(range(ac.shape[0]), max_snps, replace=False), :]
 
-    print(f"filtered {ac.shape[1]} individual genotypes")
-    print(f"{ac.shape[0]} SNPs after filtering\n\n\n")
+    if verbose:
+        print(f"filtered {ac.shape[1]} individual genotypes")
+        print(f"{ac.shape[0]} SNPs after filtering\n\n\n")
+
     return ac
 
 

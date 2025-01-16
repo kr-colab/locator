@@ -24,6 +24,7 @@ setup(
         "zarr",
         "seaborn",
         "cartopy",
+        "geopy",
     ],
     entry_points={
         "console_scripts": [
