@@ -123,9 +123,12 @@ def plot_predictions(
         preds = predictions
 
     # Get sample data from locator
-    samples_df = pd.read_csv(
-        locator.config["sample_data"], sep="\t", na_values="NA", quotechar='"'
-    )
+    if isinstance(locator.config["sample_data"], pd.DataFrame):
+        samples_df = locator.config["sample_data"].copy()
+    else:
+        samples_df = pd.read_csv(
+            locator.config["sample_data"], sep="\t", na_values="NA", quotechar='"'
+        )
     samples_df.columns = samples_df.columns.str.strip('"')
     if "sampleID" in samples_df.columns:
         samples_df["sampleID"] = samples_df["sampleID"].str.strip('"')
@@ -248,10 +251,10 @@ def plot_error_summary(
     )
 
     # Load sample data if path provided
-    if isinstance(sample_data, (str, Path)):
-        samples = pd.read_csv(sample_data, sep="\t")
+    if isinstance(sample_data, pd.DataFrame):
+        samples = sample_data.copy()
     else:
-        samples = sample_data
+        samples = pd.read_csv(sample_data, sep="\t")
 
     # Merge predictions with true locations
     merged = predictions.merge(

@@ -58,7 +58,8 @@ def filter_snps(genotypes, min_mac=1, max_snps=None, impute=False):
     if max_snps is not None:
         ac = ac[np.random.choice(range(ac.shape[0]), max_snps, replace=False), :]
 
-    print("running on " + str(len(ac)) + " genotypes after filtering\n\n\n")
+    print(f"filtered {ac.shape[1]} individual genotypes")
+    print(f"{ac.shape[0]} SNPs after filtering\n\n\n")
     return ac
 
 
