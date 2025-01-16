@@ -1307,6 +1307,7 @@ class Locator:
             preds = self.predict_holdout(
                 return_df=True,
                 save_preds_to_disk=not save_full_pred_matrix,
+                plot_summary=False,
                 verbose=self.config.get("keras_verbose", 1),
             )
 
