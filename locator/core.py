@@ -1369,8 +1369,8 @@ class Locator:
         af = np.array(af)
 
         # Store predictions for each replicate
-        predictions_x = []
-        predictions_y = []
+        pred_dfs = []
+        preds = None
 
         # Run jacknife replicates
         for rep in tqdm(range(n_replicates), desc="Running jacknife replicates"):
@@ -1391,28 +1391,30 @@ class Locator:
                 )
 
             # Get predictions for masked data
-            pred = self.model.predict(masked_gen)
+            predictions = self.model.predict(masked_gen, verbose=False)
+
+            # Create prediction dataframe
+            pred_df = pd.DataFrame(predictions, columns=["x", "y"])
+            pred_df["sampleID"] = self.samples[self.holdout_idx]
 
             # Denormalize predictions
-            pred_x = pred[:, 0] * self.sdlong + self.meanlong
-            pred_y = pred[:, 1] * self.sdlat + self.meanlat
+            pred_df["x"] = pred_df["x"] * self.sdlong + self.meanlong
+            pred_df["y"] = pred_df["y"] * self.sdlat + self.meanlat
 
-            predictions_x.append(pred_x)
-            predictions_y.append(pred_y)
+            # Rename columns to include replicate number
+            boot_preds = pred_df[["x", "y"]].copy()
+            boot_preds.columns = [f"x_rep{rep}", f"y_rep{rep}"]
+            pred_dfs.append(boot_preds)
+
+            # Store last predictions
+            preds = pred_df
 
         if return_df:
-            # Create output DataFrame
-            results = pd.DataFrame()
-            results["sampleID"] = self.samples[self.holdout_idx]
+            # Concatenate all predictions and add sampleIDs
+            all_predictions = pd.concat([preds[["sampleID"]], *pred_dfs], axis=1)
+            return all_predictions
 
-            # Add predictions for each replicate
-            for i in range(n_replicates):
-                results[f"x_{i}"] = predictions_x[i]
-                results[f"y_{i}"] = predictions_y[i]
-
-            return results
-
-        return predictions_x, predictions_y
+        return preds
 
     def run_windows_holdouts(
         self,
