@@ -58,8 +58,6 @@ def plot_predictions(
     width=5,
     height=4,
     dpi=300,
-    xlim=(0, 50),
-    ylim=(0, 50),
     n_levels=3,
 ):
     """Plot locator predictions from jacknife, bootstrap, or windows analyses.
@@ -92,8 +90,6 @@ def plot_predictions(
         width: Width of each subplot
         height: Height of each subplot
         dpi: DPI for output figure
-        xlim: x-axis limits (min, max)
-        ylim: y-axis limits (min, max)
         n_levels: Number of KDE contour levels to plot
 
     Returns:
@@ -147,6 +143,22 @@ def plot_predictions(
     n_rows = int(np.ceil(len(samples) / n_cols))
     fig = plt.figure(figsize=(width * n_cols, height * n_rows), dpi=dpi)
 
+    # Get x and y columns and calculate limits
+    x_cols = [col for col in preds.columns if col.startswith("x_")]
+    y_cols = [col for col in preds.columns if col.startswith("y_")]
+
+    # Calculate global min/max for x and y coordinates
+    x_all = preds[x_cols].values.ravel()
+    y_all = preds[y_cols].values.ravel()
+
+    # Add some padding (10%) to the limits
+    padding = 0.1
+    x_range = x_all.max() - x_all.min()
+    y_range = y_all.max() - y_all.min()
+
+    xlim = (x_all.min() - x_range * padding, x_all.max() + x_range * padding)
+    ylim = (y_all.min() - y_range * padding, y_all.max() + y_range * padding)
+
     # Plot each sample
     for i, sample in enumerate(samples, 1):
         ax = fig.add_subplot(
@@ -182,11 +194,8 @@ def plot_predictions(
             )
 
         # Plot predictions using KDE
-        if any(col.startswith("x_") for col in preds.columns):
+        if x_cols:  # Changed from checking columns again to using existing x_cols
             # Multiple predictions per sample (e.g., jacknife)
-            x_cols = [col for col in preds.columns if col.startswith("x_")]
-            y_cols = [col for col in preds.columns if col.startswith("y_")]
-
             # Collect all predictions
             x_preds = sample_preds[x_cols].values.ravel()
             y_preds = sample_preds[y_cols].values.ravel()
