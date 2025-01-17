@@ -9,6 +9,8 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 import copy
 from tqdm import tqdm
+from pathlib import Path
+import tensorflow as tf
 
 from .models import create_network
 from .utils import normalize_locs, filter_snps
@@ -304,6 +306,14 @@ class Locator:
         Raises:
             ValueError: If no input source is provided or if input format is invalid
         """
+        # First load sample data if not already loaded
+        if not hasattr(self, "_sample_data_df") and "sample_data" in self.config:
+            sample_df = pd.read_csv(self.config["sample_data"], sep="\t")
+            required_cols = ["sampleID", "x", "y"]
+            if not all(col in sample_df.columns for col in required_cols):
+                raise ValueError(f"sample_data must contain columns: {required_cols}")
+            self._sample_data_df = sample_df
+
         # Use stored DataFrame if available
         if hasattr(self, "_genotype_df"):
             print("using stored genotype DataFrame")
@@ -338,17 +348,7 @@ class Locator:
 
         # Load from zarr
         elif zarr is not None:
-            print("reading zarr")
-            callset = zarr.open_group(zarr, mode="r")
-            gt = callset["calldata/GT"]
-            genotypes = allel.GenotypeArray(gt[:])
-            samples = callset["samples"][:]
-
-            # Store positions for windowed analysis if not already stored
-            if not hasattr(self, "positions"):
-                self.positions = callset["variants/POS"][:]
-
-            return genotypes, samples
+            return self._load_from_zarr(zarr)
 
         # Load from VCF
         elif vcf is not None:
