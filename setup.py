@@ -33,7 +33,7 @@ setup(
         ],
     },
     zip_safe=False,
-    python_requires=">=3.8,<3.12",
+    python_requires=">=3.8,<3.13",
     setup_requires=["numpy>=1.20.0"],
     author="Andrew Kern",
     author_email="adkern@uoregon.edu",
